@@ -1,0 +1,179 @@
+// Package claude adapts the `claude` CLI to the neutral core.Backend
+// interface. It is the only package in the module that knows anything about
+// this specific CLI: how to spawn it, what flags it takes, and how to parse
+// its stream-json output (REQ-BK-02).
+package claude
+
+import (
+	"bufio"
+	"bytes"
+	"context"
+	"fmt"
+	"io"
+	"os/exec"
+	"strings"
+	"sync"
+	"time"
+
+	"github.com/s-celles/agent-relay/internal/core"
+)
+
+func init() {
+	core.Register("claude", New)
+}
+
+type Backend struct {
+	cliPath  string
+	workdir  string
+	modelMap map[string]string
+	envDeny  []string
+	agentic  core.AgenticConfig
+}
+
+func New(cfg core.BackendConfig) (core.Backend, error) {
+	b := &Backend{
+		cliPath:  cfg.CLIPath,
+		workdir:  cfg.Workdir,
+		modelMap: cfg.ModelMap,
+		envDeny:  cfg.EnvDeny,
+		agentic:  cfg.Agentic,
+	}
+	if b.cliPath == "" {
+		b.cliPath = "claude"
+	}
+	return b, nil
+}
+
+func (b *Backend) Name() string { return "claude" }
+
+func (b *Backend) Capabilities() core.Capabilities {
+	models := make([]string, 0, len(b.modelMap))
+	for logical := range b.modelMap {
+		models = append(models, logical)
+	}
+	return core.Capabilities{
+		Streaming: true,
+		Agentic:   b.agentic.Enabled,
+		Models:    models,
+	}
+}
+
+func (b *Backend) buildArgs(req core.InferRequest) []string {
+	args := []string{
+		"-p", "--output-format", "stream-json",
+		"--verbose", "--include-partial-messages",
+	}
+	// REQ-EXEC-02: no permission-bypass flag on the default (inference) path.
+	if b.agentic.Enabled {
+		args = append(args, b.agentic.PermissionArgs()...) // opt-in, explicit, logged
+	}
+	if m := b.mapModel(req.Model); m != "" {
+		args = append(args, "--model", m)
+	}
+	if req.System != "" {
+		args = append(args, "--system-prompt", req.System)
+	}
+	return args
+}
+
+// mapModel resolves a logical model name via the operator-configured table,
+// passing unknown names through unchanged (DQ-2).
+func (b *Backend) mapModel(logical string) string {
+	if logical == "" {
+		return ""
+	}
+	if mapped, ok := b.modelMap[logical]; ok {
+		return mapped
+	}
+	return logical
+}
+
+// encodePrompt flattens the conversation into the text prompt the CLI reads
+// from stdin. A single user message passes through verbatim; multi-turn
+// history becomes a labeled transcript (v1: text only).
+func (b *Backend) encodePrompt(req core.InferRequest) string {
+	if len(req.Messages) == 1 && req.Messages[0].Role == core.RoleUser {
+		return req.Messages[0].Content
+	}
+	var sb strings.Builder
+	for _, m := range req.Messages {
+		label := "Human"
+		if m.Role == core.RoleAssistant {
+			label = "Assistant"
+		}
+		fmt.Fprintf(&sb, "%s: %s\n\n", label, m.Content)
+	}
+	return sb.String()
+}
+
+func (b *Backend) Infer(ctx context.Context, req core.InferRequest, sink core.EventSink) error {
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
+	cmd := exec.CommandContext(ctx, b.cliPath, b.buildArgs(req)...)
+	cmd.Env = b.sanitizedEnv() // REQ-PROC-05 / REQ-PROC-07
+	cmd.Dir = b.workdir        // "" in inference mode; ephemeral dir if agentic (REQ-EXEC-04)
+	setProcAttrs(cmd)          // kill the whole process group on cancel (REQ-PROC-04)
+	cmd.WaitDelay = 5 * time.Second
+
+	stdin, err := cmd.StdinPipe()
+	if err != nil {
+		return fmt.Errorf("stdin pipe: %w", err)
+	}
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		return fmt.Errorf("stdout pipe: %w", err)
+	}
+	stderr := &bytes.Buffer{} // captured for diagnostics only
+	cmd.Stderr = stderr
+
+	if err := cmd.Start(); err != nil {
+		return fmt.Errorf("spawn backend: %w", err)
+	}
+
+	// The Backend contract requires the subprocess to be gone before Infer
+	// returns, on every exit path.
+	var waitOnce sync.Once
+	var waitErr error
+	wait := func() error {
+		waitOnce.Do(func() { waitErr = cmd.Wait() })
+		return waitErr
+	}
+	defer func() {
+		cancel()
+		_ = wait()
+	}()
+
+	// REQ-PROC-01: payload piped via stdin (avoids ARG_MAX).
+	go func() {
+		defer stdin.Close()
+		_, _ = io.WriteString(stdin, b.encodePrompt(req))
+	}()
+
+	scanner := bufio.NewScanner(stdout)
+	scanner.Buffer(make([]byte, 0, 1<<20), 8<<20)
+	for scanner.Scan() {
+		ev, ok := parseStreamJSONLine(scanner.Bytes())
+		if !ok {
+			continue
+		}
+		if err := sink.Emit(ctx, ev); err != nil {
+			return err // client gone; deferred cancel+wait reaps the process
+		}
+	}
+	if err := scanner.Err(); err != nil {
+		return fmt.Errorf("read backend output: %w", err)
+	}
+	if err := wait(); err != nil {
+		return fmt.Errorf("backend exited: %w (stderr: %s)", err, truncate(stderr.String(), 512))
+	}
+	return nil
+}
+
+func truncate(s string, n int) string {
+	s = strings.TrimSpace(s)
+	if len(s) > n {
+		return s[:n] + "…"
+	}
+	return s
+}

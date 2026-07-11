@@ -1,0 +1,163 @@
+package openai
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"net/http"
+	"strings"
+	"time"
+
+	"github.com/s-celles/agent-relay/internal/core"
+)
+
+type chunkChoice struct {
+	Index        int            `json:"index"`
+	Delta        map[string]any `json:"delta"`
+	FinishReason *string        `json:"finish_reason"`
+}
+
+// StreamSink renders core events as Chat Completions SSE chunks, flushing
+// after every event (REQ-API-02).
+type StreamSink struct {
+	w       http.ResponseWriter
+	id      string
+	model   string
+	created int64
+	started bool
+}
+
+func NewStreamSink(w http.ResponseWriter, id, model string) *StreamSink {
+	return &StreamSink{w: w, id: id, model: model, created: time.Now().Unix()}
+}
+
+// Started reports whether any bytes have been written.
+func (s *StreamSink) Started() bool { return s.started }
+
+func (s *StreamSink) Emit(ctx context.Context, ev core.Event) error {
+	switch ev.Kind {
+	case core.EventMessageStart:
+		return s.start()
+	case core.EventTextDelta:
+		if err := s.start(); err != nil {
+			return err
+		}
+		return s.chunk(chunkChoice{Delta: map[string]any{"content": ev.Text}})
+	case core.EventMessageStop:
+		if err := s.start(); err != nil {
+			return err
+		}
+		stop := "stop"
+		if err := s.chunk(chunkChoice{Delta: map[string]any{}, FinishReason: &stop}); err != nil {
+			return err
+		}
+		return s.raw("[DONE]")
+	case core.EventError:
+		if err := s.start(); err != nil {
+			return err
+		}
+		data, err := json.Marshal(map[string]any{
+			"error": map[string]any{"message": ev.Err.Error(), "type": "api_error"},
+		})
+		if err != nil {
+			return err
+		}
+		return s.raw(string(data))
+	}
+	return nil
+}
+
+func (s *StreamSink) start() error {
+	if s.started {
+		return nil
+	}
+	s.started = true
+	s.w.Header().Set("Content-Type", "text/event-stream")
+	s.w.Header().Set("Cache-Control", "no-cache")
+	s.w.WriteHeader(http.StatusOK)
+	return s.chunk(chunkChoice{Delta: map[string]any{"role": "assistant"}})
+}
+
+func (s *StreamSink) chunk(choice chunkChoice) error {
+	data, err := json.Marshal(map[string]any{
+		"id":      s.id,
+		"object":  "chat.completion.chunk",
+		"created": s.created,
+		"model":   s.model,
+		"choices": []chunkChoice{choice},
+	})
+	if err != nil {
+		return err
+	}
+	return s.raw(string(data))
+}
+
+func (s *StreamSink) raw(data string) error {
+	if _, err := fmt.Fprintf(s.w, "data: %s\n\n", data); err != nil {
+		return err
+	}
+	if f, ok := s.w.(http.Flusher); ok {
+		f.Flush()
+	}
+	return nil
+}
+
+// CollectSink accumulates the whole event stream for a non-streaming
+// chat.completion response.
+type CollectSink struct {
+	id    string
+	model string
+	text  strings.Builder
+	usage core.Usage
+	err   error
+}
+
+func NewCollectSink(id, model string) *CollectSink {
+	return &CollectSink{id: id, model: model}
+}
+
+func (c *CollectSink) Emit(ctx context.Context, ev core.Event) error {
+	switch ev.Kind {
+	case core.EventTextDelta:
+		c.text.WriteString(ev.Text)
+	case core.EventUsage, core.EventMessageStop:
+		if ev.Usage != nil {
+			c.usage = *ev.Usage
+		}
+	case core.EventError:
+		c.err = ev.Err
+	}
+	return nil
+}
+
+// Err reports a backend-signaled error captured during collection.
+func (c *CollectSink) Err() error { return c.err }
+
+func (c *CollectSink) WriteResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	return json.NewEncoder(w).Encode(map[string]any{
+		"id":      c.id,
+		"object":  "chat.completion",
+		"created": time.Now().Unix(),
+		"model":   c.model,
+		"choices": []map[string]any{{
+			"index":         0,
+			"message":       map[string]any{"role": "assistant", "content": c.text.String()},
+			"finish_reason": "stop",
+		}},
+		"usage": map[string]int{
+			"prompt_tokens":     c.usage.InputTokens,
+			"completion_tokens": c.usage.OutputTokens,
+			"total_tokens":      c.usage.InputTokens + c.usage.OutputTokens,
+		},
+	})
+}
+
+// WriteError writes an OpenAI-shaped error body with the given status.
+func WriteError(w http.ResponseWriter, status int, msg string) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	_ = json.NewEncoder(w).Encode(map[string]any{
+		"error": map[string]any{"message": msg, "type": "api_error"},
+	})
+}
