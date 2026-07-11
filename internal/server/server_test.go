@@ -1554,3 +1554,42 @@ func (b *toolBackend) Infer(ctx context.Context, req core.InferRequest, sink cor
 	}
 	return nil
 }
+
+func TestToolRequestsAreAccounted(t *testing.T) {
+	// An agent client (OpenCode, LangChain…) sends its tools on *every*
+	// request, so the tool path is the one that actually spends the
+	// subscription. It used to be the one path that skipped accounting: no
+	// tokens, no cost, no trace — the headline cost-accounting feature
+	// silently missing its most important case.
+	fb := &fakeBackend{clientTools: true, costUSD: 0.02}
+	h := newTestServer(t, fb)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("POST", "/v1/messages", strings.NewReader(toolsBody))
+	req.Header.Set("x-api-key", "good-token")
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d: %s", rec.Code, rec.Body)
+	}
+
+	mrec := httptest.NewRecorder()
+	mreq := httptest.NewRequest("GET", "/v1/metrics", nil)
+	mreq.Header.Set("x-api-key", "good-token")
+	h.ServeHTTP(mrec, mreq)
+
+	var m struct {
+		InputTokens  int64   `json:"input_tokens_total"`
+		OutputTokens int64   `json:"output_tokens_total"`
+		CostUSD      float64 `json:"cost_usd_total"`
+	}
+	if err := json.Unmarshal(mrec.Body.Bytes(), &m); err != nil {
+		t.Fatalf("decode metrics: %v", err)
+	}
+	if m.InputTokens != 3 || m.OutputTokens != 5 {
+		t.Errorf("tokens = %d in / %d out, want 3/5 — a tool request must be counted",
+			m.InputTokens, m.OutputTokens)
+	}
+	if m.CostUSD != 0.02 {
+		t.Errorf("cost_usd_total = %v, want 0.02 — the tool path spends the subscription too", m.CostUSD)
+	}
+}

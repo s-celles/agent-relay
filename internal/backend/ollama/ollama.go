@@ -94,11 +94,19 @@ type wireMessage struct {
 }
 
 type chatRequest struct {
-	Model    string         `json:"model"`
-	Messages []wireMessage  `json:"messages"`
-	Stream   bool           `json:"stream"`
-	Tools    []any          `json:"tools,omitempty"`
-	Options  map[string]any `json:"options,omitempty"`
+	Model    string        `json:"model"`
+	Messages []wireMessage `json:"messages"`
+	Stream   bool          `json:"stream"`
+	// Think is always false: a thinking model (qwen3.x) puts its reasoning in
+	// Ollama's `thinking` field and the answer in `content` only once it is
+	// done. This backend surfaces `content` alone, so with thinking on the
+	// caller sees nothing — a non-streaming request comes back empty (the
+	// token budget went to reasoning it never sees), and a streaming one gets
+	// a long silent gap that makes agent clients give up and cancel the
+	// request. Models without thinking ignore the flag.
+	Think   bool           `json:"think"`
+	Tools   []any          `json:"tools,omitempty"`
+	Options map[string]any `json:"options,omitempty"`
 }
 
 type chatChunk struct {

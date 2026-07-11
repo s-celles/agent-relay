@@ -175,6 +175,15 @@ emits and the relay currently drops.
   `TASK_STATE_INPUT_REQUIRED` — which maps onto our parked subprocess almost
   exactly). Worth doing only if a peer actually asks for it.
 
+- [ ] **Surface Ollama's `thinking` output.** Thinking models (qwen3.x) put
+  their reasoning in Ollama's `thinking` field and the answer in `content`.
+  The backend now sends `think: false` so the answer arrives at all — before
+  that, a non-streaming request came back empty and a streaming one stalled
+  long enough for agent clients to cancel. But that *disables* reasoning rather
+  than surfacing it, which likely costs answer quality on hard tasks. The right
+  fix is to map `thinking` onto the Anthropic wire's `thinking` blocks (and
+  drop it on the OpenAI wire, which has no equivalent), then re-enable it.
+
 ## Wire-compatibility polish
 
 - [x] Signal (rather than silently drop) unsupported sampling parameters:

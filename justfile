@@ -42,6 +42,16 @@ clean:
 run: build _tokens
     RELAY_TOKENS="$(cat {{token_file}})" ./relay
 
+# Run with model-name routing to a local Ollama, alongside the claude default.
+# Unrouted names (haiku, sonnet, opus…) still go to your subscription; the
+# listed names go to Ollama. Requires `ollama serve` with those models pulled.
+# Note: thinking models (qwen3.x) answer empty here — the backend surfaces only
+# Ollama's `content`, not `thinking`. Use phi3 / llama3 / dolphin-mixtral.
+run-hybrid: build _tokens
+    RELAY_TOKENS="$(cat {{token_file}})" \
+    RELAY_MODEL_ROUTES="qwen3.5=ollama,dolphin-mixtral:8x7b=ollama,phi3=ollama,llama3=ollama" \
+    ./relay
+
 # Run with agentic execution enabled (file edits only: acceptEdits).
 # Grants more than inference — read docs/execution-modes.md before using.
 run-agentic: build _tokens

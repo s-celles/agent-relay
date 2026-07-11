@@ -521,7 +521,16 @@ func (s *server) runWithTools(w http.ResponseWriter, r *http.Request, req core.I
 		}
 	}
 
-	call, err := sess.pumpUntilPause(r.Context(), sink)
+	// Observe the events on their way to the wire, exactly as run() does. An
+	// agent client sends its tools on every request, so this is the path that
+	// actually spends the subscription — leaving it unaccounted would make the
+	// cost and token counters silently miss their most important case.
+	trace := s.traceFor(req)
+	defer trace.Close()
+	observed := &usageSink{EventSink: sink, trace: trace, onSession: s.sessionHeader(w)}
+
+	call, err := sess.pumpUntilPause(r.Context(), observed)
+	s.accountUsage(w, r, observed.usage)
 	switch {
 	case err != nil:
 		sess.finish()

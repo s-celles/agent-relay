@@ -26,6 +26,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Client-tool requests were never accounted.** An agent client (OpenCode,
+  LangChain…) sends its tools on *every* request, so the tool path is the one
+  that actually spends the subscription — and it was the one path that skipped
+  `usageSink`: no tokens, no cost, no traces. The headline cost-accounting
+  feature was silently missing its most important case, and `/v1/metrics`
+  under-reported real agent usage as zero. `runWithTools` now observes the
+  event stream like every other path.
+- **Ollama thinking models returned nothing.** A thinking model (qwen3.x) puts
+  its reasoning in Ollama's `thinking` field and the answer in `content` only
+  once it is done. The backend surfaces `content` alone, so with thinking on the
+  caller saw nothing: a non-streaming request came back **empty** (the token
+  budget went to reasoning it never sees), and a streaming one got a long silent
+  gap that made agent clients give up and cancel the request. The backend now
+  sends `think: false`; models without thinking ignore the flag. Note this
+  *disables* reasoning rather than surfacing it — see the roadmap.
 - **Unchecked error returns** flagged by the new lint gate: best-effort
   closes and cleanup paths across `backend/claude`, `backend/ollama`,
   `outputs`, `server`, and `toolbridge` now discard errors explicitly; a dead

@@ -131,6 +131,33 @@ func TestInferHonorsMaxTokensAndSampling(t *testing.T) {
 	}
 }
 
+func TestInferDisablesThinking(t *testing.T) {
+	// Thinking models (qwen3.x) put their reasoning in Ollama's `thinking`
+	// field and the answer in `content` only once thinking ends. The relay
+	// surfaces `content` alone, so with thinking on the caller sees nothing:
+	// a non-streaming request returns empty text (the token budget goes to
+	// reasoning it never sees), and a streaming one gets a long silent gap
+	// that makes agent clients give up and cancel. Ask Ollama to answer
+	// directly. Models without thinking ignore the flag.
+	srv, got := fakeOllama(t, `{"message":{"content":"hi"},"done":true}`)
+	b := newBackend(t, srv.URL)
+
+	if err := b.Infer(context.Background(), core.InferRequest{
+		Model:    "qwen3.5",
+		Messages: []core.Message{core.NewTextMessage(core.RoleUser, "hi")},
+	}, &collectSink{}); err != nil {
+		t.Fatalf("Infer: %v", err)
+	}
+
+	think, present := (*got)["think"]
+	if !present {
+		t.Fatalf("request carries no `think` field: %v", *got)
+	}
+	if think != false {
+		t.Errorf("think = %v, want false (thinking output is never surfaced)", think)
+	}
+}
+
 func TestInferToolCalls(t *testing.T) {
 	srv, got := fakeOllama(t,
 		`{"message":{"role":"assistant","content":"","tool_calls":[{"id":"call_1","function":{"name":"get_weather","arguments":{"city":"Paris"}}}]},"done":false}`,
