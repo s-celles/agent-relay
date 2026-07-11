@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-07-11
+
 ### Added
 
 - **Second backend: `ollama`** (`internal/backend/ollama`) — a local Ollama
@@ -26,6 +28,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   now resolved **per request** from the backend that will serve it, not
   frozen at startup.
 - `docs/backends.md`: the two backends side by side, and why routing.
+- Scope boundary recorded (ROADMAP non-goal + `docs/backends.md`):
+  **agent-relay is not an LLM provider router.** Model-name routing exists to
+  compose the sources you already own — a subscription reachable only through
+  its CLI, and local compute — not to aggregate HTTP providers. A service that
+  already has an API needs no backend here; put a real router (LiteLLM) in
+  front and register the relay as one of its providers. The rule for adding a
+  backend is tightened accordingly, and the Mistral `vibe` and Antigravity
+  `agy` CLIs are recorded as probed and (conditionally) rejected.
 - **Client-defined tool execution.** `tools[]` now works: the relay runs the
   standard Messages API tool loop (`stop_reason: "tool_use"` → the caller
   executes the tool → `tool_result`), so the official SDKs work unmodified.
@@ -229,7 +239,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Dockerfile (multi-stage, bundles the `claude` CLI) and docker-compose
   example; deployment documentation.
 
-[Unreleased]: https://github.com/s-celles/agent-relay/compare/v0.6.0...HEAD
+[Unreleased]: https://github.com/s-celles/agent-relay/compare/v0.7.0...HEAD
+[0.7.0]: https://github.com/s-celles/agent-relay/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/s-celles/agent-relay/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/s-celles/agent-relay/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/s-celles/agent-relay/compare/v0.3.0...v0.4.0
