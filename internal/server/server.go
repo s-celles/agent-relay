@@ -41,6 +41,9 @@ type server struct {
 	// process: the Anthropic wire makes max_tokens mandatory, so warning on
 	// every request would flood the log.
 	maxTokensWarn sync.Once
+	// samplingWarn does the same for dropped sampling parameters, which
+	// many clients set on every request by default.
+	samplingWarn sync.Once
 }
 
 // Option customizes the server (currently: logger injection).
@@ -212,6 +215,24 @@ func (s *server) noteMaxTokens(req core.InferRequest) {
 	})
 }
 
+// noteSampling signals dropped sampling parameters rather than ignoring them
+// silently. Like the max_tokens warning it fires once per process: clients
+// routinely set temperature on every request.
+func (s *server) noteSampling(req core.InferRequest) {
+	if s.caps.Sampling {
+		return
+	}
+	params := req.UnsupportedSampling()
+	if len(params) == 0 {
+		return
+	}
+	s.samplingWarn.Do(func() {
+		s.logger.Warn("sampling parameters are not supported by this backend and were ignored",
+			"backend", s.dispatcher.Backend.Name(),
+			"params", strings.Join(params, ","))
+	})
+}
+
 // authorizeAgentic decides whether this request may run agentically
 // (REQ-EXEC-06). It returns (agentic, ok); when ok is false a 403 has
 // already been written and nothing must be dispatched. Every authorized
@@ -262,6 +283,7 @@ func (s *server) handleMessages(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.noteMaxTokens(req)
+	s.noteSampling(req)
 	agentic, ok := s.authorizeAgentic(w, r, anthropic.WriteError)
 	if !ok {
 		return
@@ -292,6 +314,7 @@ func (s *server) handleChat(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.noteMaxTokens(req)
+	s.noteSampling(req)
 	agentic, ok := s.authorizeAgentic(w, r, openai.WriteError)
 	if !ok {
 		return
@@ -302,7 +325,9 @@ func (s *server) handleChat(w http.ResponseWriter, r *http.Request) {
 	}
 	id := "chatcmpl-" + obs.NewRequestID()
 	if req.Stream {
-		s.run(w, r, req, openai.NewStreamSink(w, id, req.Model), openai.WriteError)
+		sink := openai.NewStreamSink(w, id, req.Model)
+		sink.IncludeUsage = req.IncludeUsage // stream_options.include_usage
+		s.run(w, r, req, sink, openai.WriteError)
 		return
 	}
 	sink := openai.NewCollectSink(id, req.Model)

@@ -24,11 +24,17 @@ type fakeBackend struct {
 	block       bool
 	clientTools bool
 	maxTokens   bool
+	sampling    bool
 }
 
 func (f *fakeBackend) Name() string { return "fake" }
 func (f *fakeBackend) Capabilities() core.Capabilities {
-	return core.Capabilities{Streaming: true, ClientTools: f.clientTools, MaxTokens: f.maxTokens}
+	return core.Capabilities{
+		Streaming:   true,
+		ClientTools: f.clientTools,
+		MaxTokens:   f.maxTokens,
+		Sampling:    f.sampling,
+	}
 }
 func (f *fakeBackend) Infer(ctx context.Context, req core.InferRequest, sink core.EventSink) error {
 	f.calls.Add(1)
@@ -555,6 +561,61 @@ func TestMaxTokensWarningLoggedOncePerProcess(t *testing.T) {
 	if n := strings.Count(buf.String(), "not enforced"); n != 1 {
 		t.Fatalf("max_tokens warning logged %d times across two requests, want exactly 1; log:\n%s", n, buf.String())
 	}
+}
+
+func TestSamplingParamsWarnOnceAndAreListed(t *testing.T) {
+	// Dropped sampling parameters must be signaled, not silently ignored —
+	// but only once per process, like the max_tokens warning.
+	h, buf := newLoggedServer(t, &fakeBackend{}) // Sampling: false
+	body := `{"model":"sonnet","max_tokens":100,"temperature":0.7,"top_k":40,
+		"stop_sequences":["END"],"messages":[{"role":"user","content":"hi"}]}`
+	for i := 0; i < 2; i++ {
+		req := httptest.NewRequest("POST", "/v1/messages", strings.NewReader(body))
+		req.Header.Set("x-api-key", "good-token")
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status = %d, body: %s", rec.Code, rec.Body.String())
+		}
+	}
+	lines := logLines(t, buf, "sampling parameters are not supported by this backend and were ignored")
+	if len(lines) != 1 {
+		t.Fatalf("warnings = %d, want exactly 1 (log: %s)", len(lines), buf.String())
+	}
+	params, _ := lines[0]["params"].(string)
+	for _, want := range []string{"temperature", "top_k", "stop_sequences"} {
+		if !strings.Contains(params, want) {
+			t.Errorf("warning should name %q; params = %q", want, params)
+		}
+	}
+	if strings.Contains(params, "top_p") {
+		t.Errorf("warning must not name unset params; params = %q", params)
+	}
+}
+
+func TestNoSamplingWarningWhenUnsetOrSupported(t *testing.T) {
+	t.Run("no sampling params set", func(t *testing.T) {
+		h, buf := newLoggedServer(t, &fakeBackend{})
+		rec := postMessages(t, h, nil)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status = %d", rec.Code)
+		}
+		if strings.Contains(buf.String(), "sampling parameters") {
+			t.Errorf("no warning expected:\n%s", buf.String())
+		}
+	})
+
+	t.Run("backend supports sampling", func(t *testing.T) {
+		h, buf := newLoggedServer(t, &fakeBackend{sampling: true})
+		body := `{"model":"sonnet","max_tokens":100,"temperature":0.7,"messages":[{"role":"user","content":"hi"}]}`
+		req := httptest.NewRequest("POST", "/v1/messages", strings.NewReader(body))
+		req.Header.Set("x-api-key", "good-token")
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		if strings.Contains(buf.String(), "sampling parameters") {
+			t.Errorf("no warning expected when the backend honors them:\n%s", buf.String())
+		}
+	})
 }
 
 func TestDisabledAgenticDenialIsLogged(t *testing.T) {

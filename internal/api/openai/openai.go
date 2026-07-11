@@ -46,6 +46,12 @@ type chatRequest struct {
 	MaxCompletionTokens int        `json:"max_completion_tokens"`
 	Stream              bool       `json:"stream"`
 	Tools               []wireTool `json:"tools"`
+	Temperature         *float64   `json:"temperature"`
+	TopP                *float64   `json:"top_p"`
+	Stop                []string   `json:"stop"`
+	StreamOptions       *struct {
+		IncludeUsage bool `json:"include_usage"`
+	} `json:"stream_options"`
 }
 
 // DecodeRequest parses a POST /v1/chat/completions body into a
@@ -62,12 +68,18 @@ func DecodeRequest(r io.Reader) (core.InferRequest, error) {
 	}
 
 	req := core.InferRequest{
-		Model:     wire.Model,
-		MaxTokens: wire.MaxTokens,
-		Stream:    wire.Stream,
+		Model:         wire.Model,
+		MaxTokens:     wire.MaxTokens,
+		Stream:        wire.Stream,
+		Temperature:   wire.Temperature,
+		TopP:          wire.TopP,
+		StopSequences: wire.Stop,
 	}
 	if wire.MaxCompletionTokens > 0 {
 		req.MaxTokens = wire.MaxCompletionTokens
+	}
+	if wire.StreamOptions != nil {
+		req.IncludeUsage = wire.StreamOptions.IncludeUsage
 	}
 	for _, t := range wire.Tools {
 		if t.Type != "function" {

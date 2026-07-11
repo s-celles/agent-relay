@@ -57,8 +57,11 @@ func (b *Backend) Capabilities() core.Capabilities {
 		Streaming: true,
 		Agentic:   b.agentic.Enabled,
 		// MaxTokens stays false: the claude CLI has no flag to cap output
-		// tokens, so InferRequest.MaxTokens cannot be enforced.
+		// tokens, so InferRequest.MaxTokens cannot be enforced. Sampling
+		// stays false for the same reason: no temperature/top_p/top_k/stop
+		// flags exist.
 		MaxTokens: false,
+		Sampling:  false,
 		Models:    models,
 	}
 }

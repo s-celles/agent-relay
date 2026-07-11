@@ -82,6 +82,19 @@ func TestDecodeRequest(t *testing.T) {
 				Messages:  []core.Message{core.NewTextMessage(core.RoleUser, "q")},
 			},
 		},
+		{
+			name: "sampling parameters and stream_options are decoded",
+			body: `{"model":"m","temperature":0.5,"top_p":0.8,"stop":["END"],"stream":true,"stream_options":{"include_usage":true},"messages":[{"role":"user","content":"q"}]}`,
+			want: core.InferRequest{
+				Model:         "m",
+				Stream:        true,
+				Messages:      []core.Message{core.NewTextMessage(core.RoleUser, "q")},
+				Temperature:   ptrF(0.5),
+				TopP:          ptrF(0.8),
+				StopSequences: []string{"END"},
+				IncludeUsage:  true,
+			},
+		},
 		{name: "invalid role", body: `{"model":"m","messages":[{"role":"function","content":"x"}]}`, wantErr: true},
 		{name: "no conversation messages", body: `{"model":"m","messages":[{"role":"system","content":"x"}]}`, wantErr: true},
 		{name: "malformed json", body: `[`, wantErr: true},
@@ -100,8 +113,14 @@ func TestDecodeRequest(t *testing.T) {
 				t.Fatalf("DecodeRequest: %v", err)
 			}
 			if got.Model != tc.want.Model || got.System != tc.want.System ||
-				got.Stream != tc.want.Stream || got.MaxTokens != tc.want.MaxTokens {
+				got.Stream != tc.want.Stream || got.MaxTokens != tc.want.MaxTokens ||
+				got.IncludeUsage != tc.want.IncludeUsage ||
+				len(got.StopSequences) != len(tc.want.StopSequences) {
 				t.Fatalf("got %+v, want %+v", got, tc.want)
+			}
+			if (got.Temperature == nil) != (tc.want.Temperature == nil) ||
+				(got.Temperature != nil && *got.Temperature != *tc.want.Temperature) {
+				t.Fatalf("temperature = %v, want %v", got.Temperature, tc.want.Temperature)
 			}
 			if len(got.Tools) != len(tc.want.Tools) {
 				t.Fatalf("got %d tools, want %d", len(got.Tools), len(tc.want.Tools))
@@ -130,6 +149,55 @@ func TestDecodeRequest(t *testing.T) {
 	}
 }
 
+func ptrF(v float64) *float64 { return &v }
+
+func TestStreamSinkIncludeUsage(t *testing.T) {
+	// With stream_options.include_usage, a final chunk carries usage and an
+	// empty choices array, immediately before [DONE].
+	rec := httptest.NewRecorder()
+	sink := NewStreamSink(rec, "chatcmpl-test", "sonnet")
+	sink.IncludeUsage = true
+	emitAll(t, sink, happyPath)
+
+	body := rec.Body.String()
+	idx := strings.Index(body, "data: [DONE]")
+	if idx < 0 {
+		t.Fatalf("no [DONE]:\n%s", body)
+	}
+	before := body[:idx]
+	last := strings.TrimSpace(before[strings.LastIndex(before, "data: "):])
+	last = strings.TrimPrefix(last, "data: ")
+	var chunk struct {
+		Choices []any `json:"choices"`
+		Usage   *struct {
+			PromptTokens     int `json:"prompt_tokens"`
+			CompletionTokens int `json:"completion_tokens"`
+			TotalTokens      int `json:"total_tokens"`
+		} `json:"usage"`
+	}
+	if err := json.Unmarshal([]byte(last), &chunk); err != nil {
+		t.Fatalf("final chunk not JSON: %v (%q)", err, last)
+	}
+	if chunk.Usage == nil {
+		t.Fatalf("final chunk carries no usage: %s", last)
+	}
+	if chunk.Usage.PromptTokens != 3 || chunk.Usage.CompletionTokens != 5 || chunk.Usage.TotalTokens != 8 {
+		t.Errorf("usage = %+v", chunk.Usage)
+	}
+	if len(chunk.Choices) != 0 {
+		t.Errorf("usage chunk must have empty choices, got %v", chunk.Choices)
+	}
+}
+
+func TestStreamSinkNoUsageByDefault(t *testing.T) {
+	rec := httptest.NewRecorder()
+	sink := NewStreamSink(rec, "chatcmpl-test", "sonnet")
+	emitAll(t, sink, happyPath)
+	if strings.Contains(rec.Body.String(), `"usage"`) {
+		t.Errorf("usage must be absent without include_usage:\n%s", rec.Body.String())
+	}
+}
+
 func emitAll(t *testing.T, sink core.EventSink, events []core.Event) {
 	t.Helper()
 	for _, ev := range events {
@@ -140,7 +208,7 @@ func emitAll(t *testing.T, sink core.EventSink, events []core.Event) {
 }
 
 var happyPath = []core.Event{
-	{Kind: core.EventMessageStart},
+	{Kind: core.EventMessageStart, Usage: &core.Usage{InputTokens: 3}},
 	{Kind: core.EventTextDelta, Text: "Hel"},
 	{Kind: core.EventTextDelta, Text: "lo"},
 	{Kind: core.EventMessageStop, Usage: &core.Usage{InputTokens: 3, OutputTokens: 5}},

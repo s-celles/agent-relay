@@ -63,12 +63,15 @@ What is known to be missing or deferred, relative to the design document
 
 ## Wire-compatibility polish
 
-- [ ] Signal (rather than silently drop) unsupported sampling parameters
-  (`temperature`, `top_p`, `stop_sequences`).
-- [ ] Include usage in OpenAI streaming responses
-  (`stream_options: {"include_usage": true}` convention).
-- [ ] Remove or use the `EventUsage` neutral event kind (defined, never
-  emitted standalone).
+- [x] Signal (rather than silently drop) unsupported sampling parameters:
+  decoded on both wires, backends declare `Capabilities.Sampling`, and the
+  relay logs a one-time warning naming the dropped parameters.
+- [x] Include usage in OpenAI streaming responses
+  (`stream_options: {"include_usage": true}`): a final empty-choices chunk
+  carries usage before `[DONE]`.
+- [x] `EventUsage` removed; usage now rides on `EventMessageStart` (input
+  tokens, as the wire formats report them up front) and `EventMessageStop`.
+  Anthropic `message_start` now reports real `input_tokens` instead of zero.
 
 ## Non-goals (deliberate)
 

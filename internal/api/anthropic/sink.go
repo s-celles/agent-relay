@@ -41,6 +41,9 @@ func (s *StreamSink) Started() bool { return s.started }
 func (s *StreamSink) Emit(ctx context.Context, ev core.Event) error {
 	switch ev.Kind {
 	case core.EventMessageStart:
+		if ev.Usage != nil {
+			s.usage = *ev.Usage
+		}
 		return s.start()
 	case core.EventTextDelta:
 		if err := s.openBlock("text", map[string]any{"type": "text", "text": ""}); err != nil {
@@ -67,12 +70,9 @@ func (s *StreamSink) Emit(ctx context.Context, ev core.Event) error {
 		})
 	case core.EventToolUseStop:
 		return s.closeBlock()
-	case core.EventUsage, core.EventMessageStop:
+	case core.EventMessageStop:
 		if ev.Usage != nil {
 			s.usage = *ev.Usage
-		}
-		if ev.Kind == core.EventUsage {
-			return nil
 		}
 		return s.stop(ev.StopReason)
 	case core.EventError:
@@ -100,7 +100,7 @@ func (s *StreamSink) start() error {
 		"message": map[string]any{
 			"id": s.id, "type": "message", "role": "assistant", "model": s.model,
 			"content": []any{}, "stop_reason": nil, "stop_sequence": nil,
-			"usage": usageJSON{},
+			"usage": usageJSON{InputTokens: s.usage.InputTokens, OutputTokens: s.usage.OutputTokens},
 		},
 	})
 }
@@ -218,7 +218,7 @@ func (c *CollectSink) Emit(ctx context.Context, ev core.Event) error {
 		if n := len(c.blocks); n > 0 && c.blocks[n-1].kind == "tool_use" {
 			c.blocks[n-1].text.WriteString(ev.Text)
 		}
-	case core.EventUsage, core.EventMessageStop:
+	case core.EventMessageStart, core.EventMessageStop:
 		if ev.Usage != nil {
 			c.usage = *ev.Usage
 		}

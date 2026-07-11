@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Sampling parameters (`temperature`, `top_p`, `top_k`, `stop_sequences` /
+  OpenAI `stop`) are decoded on both wires; backends declare whether they
+  honor them (`Capabilities.Sampling`), and the relay logs a one-time
+  warning naming the parameters it dropped instead of ignoring them
+  silently.
+- OpenAI streaming honors `stream_options: {"include_usage": true}`: a final
+  chunk with empty `choices` carries token usage before `data: [DONE]`.
+
+### Changed
+
+- Usage now rides on `EventMessageStart` (input tokens) as well as
+  `EventMessageStop`; the unused `EventUsage` event kind is removed. The
+  Anthropic `message_start` event consequently reports real `input_tokens`
+  instead of zero.
+
 ## [0.4.0] - 2026-07-11
 
 ### Added

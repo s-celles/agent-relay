@@ -91,6 +91,12 @@ func TestInferHappyPath(t *testing.T) {
 	if last.Usage == nil || last.Usage.InputTokens != 3 || last.Usage.OutputTokens != 5 {
 		t.Errorf("final usage = %+v", last.Usage)
 	}
+	// message_start reports input tokens; forward them so wire adapters can
+	// render a faithful message_start instead of zeros.
+	first := sink.events[0]
+	if first.Usage == nil || first.Usage.InputTokens != 3 {
+		t.Errorf("message_start usage = %+v, want input_tokens 3", first.Usage)
+	}
 }
 
 func TestInferPipesPromptViaStdin(t *testing.T) {
@@ -612,6 +618,9 @@ func TestRegisteredInCore(t *testing.T) {
 	}
 	if caps.MaxTokens {
 		t.Error("the claude CLI has no max-tokens flag; MaxTokens must be false")
+	}
+	if caps.Sampling {
+		t.Error("the claude CLI has no sampling flags; Sampling must be false")
 	}
 }
 

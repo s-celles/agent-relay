@@ -20,11 +20,15 @@ type chunkChoice struct {
 // StreamSink renders core events as Chat Completions SSE chunks, flushing
 // after every event (REQ-API-02).
 type StreamSink struct {
-	w       http.ResponseWriter
-	id      string
-	model   string
-	created int64
-	started bool
+	w http.ResponseWriter
+	// IncludeUsage mirrors stream_options.include_usage: when set, a final
+	// chunk with empty choices carries token usage before [DONE].
+	IncludeUsage bool
+	id           string
+	model        string
+	created      int64
+	started      bool
+	usage        core.Usage
 }
 
 func NewStreamSink(w http.ResponseWriter, id, model string) *StreamSink {
@@ -37,6 +41,9 @@ func (s *StreamSink) Started() bool { return s.started }
 func (s *StreamSink) Emit(ctx context.Context, ev core.Event) error {
 	switch ev.Kind {
 	case core.EventMessageStart:
+		if ev.Usage != nil {
+			s.usage = *ev.Usage
+		}
 		return s.start()
 	case core.EventTextDelta:
 		if err := s.start(); err != nil {
@@ -47,9 +54,17 @@ func (s *StreamSink) Emit(ctx context.Context, ev core.Event) error {
 		if err := s.start(); err != nil {
 			return err
 		}
+		if ev.Usage != nil {
+			s.usage = *ev.Usage
+		}
 		stop := "stop"
 		if err := s.chunk(chunkChoice{Delta: map[string]any{}, FinishReason: &stop}); err != nil {
 			return err
+		}
+		if s.IncludeUsage {
+			if err := s.usageChunk(); err != nil {
+				return err
+			}
 		}
 		return s.raw("[DONE]")
 	case core.EventError:
@@ -76,6 +91,27 @@ func (s *StreamSink) start() error {
 	s.w.Header().Set("Cache-Control", "no-cache")
 	s.w.WriteHeader(http.StatusOK)
 	return s.chunk(chunkChoice{Delta: map[string]any{"role": "assistant"}})
+}
+
+// usageChunk emits the final usage-carrying chunk (empty choices), per
+// stream_options.include_usage.
+func (s *StreamSink) usageChunk() error {
+	data, err := json.Marshal(map[string]any{
+		"id":      s.id,
+		"object":  "chat.completion.chunk",
+		"created": s.created,
+		"model":   s.model,
+		"choices": []chunkChoice{},
+		"usage": map[string]int{
+			"prompt_tokens":     s.usage.InputTokens,
+			"completion_tokens": s.usage.OutputTokens,
+			"total_tokens":      s.usage.InputTokens + s.usage.OutputTokens,
+		},
+	})
+	if err != nil {
+		return err
+	}
+	return s.raw(string(data))
 }
 
 func (s *StreamSink) chunk(choice chunkChoice) error {
@@ -120,7 +156,7 @@ func (c *CollectSink) Emit(ctx context.Context, ev core.Event) error {
 	switch ev.Kind {
 	case core.EventTextDelta:
 		c.text.WriteString(ev.Text)
-	case core.EventUsage, core.EventMessageStop:
+	case core.EventMessageStart, core.EventMessageStop:
 		if ev.Usage != nil {
 			c.usage = *ev.Usage
 		}

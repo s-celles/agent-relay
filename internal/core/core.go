@@ -82,6 +82,15 @@ type InferRequest struct {
 	// Capabilities.ClientTools can serve them.
 	Tools      []Tool
 	ToolChoice string // "auto", "any", "tool", "none"; "" when unset
+	// Sampling parameters. Nil/empty means unset. Backends that do not
+	// report Capabilities.Sampling ignore them; the server signals that.
+	Temperature   *float64
+	TopP          *float64
+	TopK          *int
+	StopSequences []string
+	// IncludeUsage asks a streaming response to carry token usage
+	// (OpenAI's stream_options.include_usage; always on in the Anthropic wire).
+	IncludeUsage bool
 	// Agentic marks a request authorized for host-side agentic execution
 	// (REQ-EXEC-06). Only the server sets it, after per-request
 	// authorization; backends refuse it unless configured for agentic mode.
@@ -97,7 +106,6 @@ type EventKind int
 const (
 	EventMessageStart EventKind = iota
 	EventTextDelta
-	EventUsage
 	EventMessageStop
 	EventError
 	EventToolUseStart // the model starts calling a client-defined tool
@@ -108,9 +116,11 @@ const (
 type Usage struct{ InputTokens, OutputTokens int }
 
 type Event struct {
-	Kind       EventKind
-	Text       string // EventTextDelta; EventToolUseDelta: partial input JSON
-	Usage      *Usage // EventUsage / EventMessageStop
+	Kind EventKind
+	Text string // EventTextDelta; EventToolUseDelta: partial input JSON
+	// Usage is set on EventMessageStart (input tokens, as the wire formats
+	// report them up front) and on EventMessageStop (final counts).
+	Usage      *Usage
 	Err        error  // EventError
 	ToolID     string // EventToolUseStart
 	ToolName   string // EventToolUseStart
@@ -133,7 +143,29 @@ type Capabilities struct {
 	// The claude CLI backend cannot (the CLI has no such flag), so the wire
 	// value is accepted for compatibility but responses may exceed it.
 	MaxTokens bool
-	Models    []string
+	// Sampling is true when the backend honors Temperature/TopP/TopK/
+	// StopSequences. The claude CLI exposes no such flags.
+	Sampling bool
+	Models   []string
+}
+
+// UnsupportedSampling lists the sampling parameters set on the request, for
+// signaling when the backend cannot honor them.
+func (r InferRequest) UnsupportedSampling() []string {
+	var params []string
+	if r.Temperature != nil {
+		params = append(params, "temperature")
+	}
+	if r.TopP != nil {
+		params = append(params, "top_p")
+	}
+	if r.TopK != nil {
+		params = append(params, "top_k")
+	}
+	if len(r.StopSequences) > 0 {
+		params = append(params, "stop_sequences")
+	}
+	return params
 }
 
 // Backend is implemented once per agent CLI/SDK.

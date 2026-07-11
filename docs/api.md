@@ -43,6 +43,10 @@ Request body (v1 supports text content only):
   cannot enforce it.
 - `tools` and `tool_choice` are decoded, but serving them requires a backend
   that supports client-defined tools — see "Client-defined tools" below.
+- `temperature`, `top_p`, `top_k`, and `stop_sequences` are decoded but
+  **ignored** by the claude backend (the CLI has no such flags). The relay
+  logs a one-time warning naming the parameters it dropped, rather than
+  ignoring them silently.
 
 **Streaming** (`"stream": true`) returns `text/event-stream` with the
 standard Anthropic event sequence, flushed per event: `message_start`,
@@ -110,9 +114,14 @@ of what the API offers that the relay cannot, see
 `system` / `developer` messages map onto the backend system prompt.
 `max_tokens` and `max_completion_tokens` (the modern OpenAI parameter, which
 takes precedence) are optional here and carry the same limitation as on
-`/v1/messages`: accepted, but not enforced by the claude backend.
+`/v1/messages`: accepted, but not enforced by the claude backend. Sampling
+parameters (`temperature`, `top_p`, `stop`) are likewise decoded but ignored,
+with a one-time warning.
+
 Streaming returns `chat.completion.chunk` SSE frames terminated by
-`data: [DONE]`; non-streaming returns a `chat.completion` object with
+`data: [DONE]`. With `stream_options: {"include_usage": true}`, a final chunk
+with an empty `choices` array carries `usage` just before `[DONE]`, as the
+OpenAI API does. Non-streaming returns a `chat.completion` object with
 `usage`.
 
 ## Agentic requests

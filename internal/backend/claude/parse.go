@@ -27,6 +27,9 @@ type streamLine struct {
 			Type string `json:"type"`
 			Text string `json:"text"`
 		} `json:"delta"`
+		Message *struct {
+			Usage *wireUsage `json:"usage"`
+		} `json:"message"`
 	} `json:"event"`
 }
 
@@ -46,7 +49,16 @@ func parseStreamJSONLine(line []byte) (core.Event, bool) {
 		}
 		switch l.Event.Type {
 		case "message_start":
-			return core.Event{Kind: core.EventMessageStart}, true
+			ev := core.Event{Kind: core.EventMessageStart}
+			// The CLI reports input tokens up front; forward them so wire
+			// adapters can render a faithful message_start.
+			if l.Event.Message != nil && l.Event.Message.Usage != nil {
+				ev.Usage = &core.Usage{
+					InputTokens:  l.Event.Message.Usage.InputTokens,
+					OutputTokens: l.Event.Message.Usage.OutputTokens,
+				}
+			}
+			return ev, true
 		case "content_block_delta":
 			if l.Event.Delta != nil && l.Event.Delta.Type == "text_delta" {
 				return core.Event{Kind: core.EventTextDelta, Text: l.Event.Delta.Text}, true

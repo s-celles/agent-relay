@@ -118,6 +118,19 @@ func TestDecodeRequest(t *testing.T) {
 			},
 		},
 		{
+			name: "sampling parameters are decoded",
+			body: `{"model":"m","max_tokens":1,"temperature":0.7,"top_p":0.9,"top_k":40,"stop_sequences":["END"],"messages":[{"role":"user","content":"q"}]}`,
+			want: core.InferRequest{
+				Model:         "m",
+				MaxTokens:     1,
+				Messages:      []core.Message{core.NewTextMessage(core.RoleUser, "q")},
+				Temperature:   ptr(0.7),
+				TopP:          ptr(0.9),
+				TopK:          ptr(40),
+				StopSequences: []string{"END"},
+			},
+		},
+		{
 			name: "tools and tool_choice",
 			body: `{"model":"m","max_tokens":1,"tool_choice":{"type":"auto"},"tools":[
 				{"name":"get_weather","description":"Get weather","input_schema":{"type":"object","properties":{"city":{"type":"string"}}}}
@@ -207,12 +220,20 @@ func TestDecodeRequest(t *testing.T) {
 	}
 }
 
+func ptr[T any](v T) *T { return &v }
+
 func assertInferEqual(t *testing.T, got, want core.InferRequest) {
 	t.Helper()
 	if got.Model != want.Model || got.System != want.System ||
 		got.Stream != want.Stream || got.MaxTokens != want.MaxTokens ||
 		got.ToolChoice != want.ToolChoice {
 		t.Fatalf("got %+v, want %+v", got, want)
+	}
+	if !eqPtr(got.Temperature, want.Temperature) || !eqPtr(got.TopP, want.TopP) ||
+		!eqPtr(got.TopK, want.TopK) || len(got.StopSequences) != len(want.StopSequences) {
+		t.Fatalf("sampling params: got temp=%v topp=%v topk=%v stop=%v, want temp=%v topp=%v topk=%v stop=%v",
+			got.Temperature, got.TopP, got.TopK, got.StopSequences,
+			want.Temperature, want.TopP, want.TopK, want.StopSequences)
 	}
 	if len(got.Tools) != len(want.Tools) {
 		t.Fatalf("got %d tools, want %d", len(got.Tools), len(want.Tools))
@@ -250,6 +271,13 @@ func assertMessageEqual(t *testing.T, i int, got, want core.Message) {
 	}
 }
 
+func eqPtr[T comparable](a, b *T) bool {
+	if a == nil || b == nil {
+		return a == nil && b == nil
+	}
+	return *a == *b
+}
+
 func jsonEqual(a, b []byte) bool {
 	if len(a) == 0 && len(b) == 0 {
 		return true
@@ -273,10 +301,23 @@ func emitAll(t *testing.T, sink core.EventSink, events []core.Event) {
 }
 
 var happyPath = []core.Event{
-	{Kind: core.EventMessageStart},
+	{Kind: core.EventMessageStart, Usage: &core.Usage{InputTokens: 3}},
 	{Kind: core.EventTextDelta, Text: "Hel"},
 	{Kind: core.EventTextDelta, Text: "lo"},
 	{Kind: core.EventMessageStop, Usage: &core.Usage{InputTokens: 3, OutputTokens: 5}},
+}
+
+func TestStreamSinkMessageStartCarriesInputTokens(t *testing.T) {
+	// The real API reports input_tokens in message_start; the CLI gives us
+	// that number, so the relay must not send zeros.
+	rec := httptest.NewRecorder()
+	sink := NewStreamSink(rec, "msg_test", "sonnet")
+	emitAll(t, sink, happyPath)
+
+	start := strings.SplitN(rec.Body.String(), "event: content_block_start", 2)[0]
+	if !strings.Contains(start, `"input_tokens":3`) {
+		t.Errorf("message_start must carry input_tokens:\n%s", start)
+	}
 }
 
 var toolUsePath = []core.Event{

@@ -18,7 +18,7 @@ and some are structurally impossible. This page is the honest map.
 | Client-defined tools (`tools[]`) | ❌ rejected (400) | The CLI has no raw tool-calling mode |
 | Structured outputs (JSON schema, `strict`) | ❌ absent | No CLI equivalent; prompt engineering only |
 | Assistant prefill / exact turn replay | ❌ absent | History is a text approximation, not token-exact |
-| `temperature`, `top_p`, `top_k`, `stop_sequences` | ❌ dropped silently | No CLI equivalents |
+| `temperature`, `top_p`, `top_k`, `stop_sequences` | ❌ dropped (signaled) | No CLI equivalents; the relay warns rather than ignoring silently |
 | Thinking/effort control per request | ❌ absent | The CLI decides internally |
 | Prompt caching control (`cache_control`) | ❌ absent | The CLI manages its cache; no client visibility |
 | `count_tokens`, Batches, Files API, `/v1/models` | ❌ absent | No CLI equivalents |

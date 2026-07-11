@@ -25,13 +25,17 @@ type wireTool struct {
 }
 
 type messagesRequest struct {
-	Model      string          `json:"model"`
-	MaxTokens  int             `json:"max_tokens"`
-	System     json.RawMessage `json:"system"`
-	Messages   []wireMessage   `json:"messages"`
-	Stream     bool            `json:"stream"`
-	Tools      []wireTool      `json:"tools"`
-	ToolChoice json.RawMessage `json:"tool_choice"`
+	Model         string          `json:"model"`
+	MaxTokens     int             `json:"max_tokens"`
+	System        json.RawMessage `json:"system"`
+	Messages      []wireMessage   `json:"messages"`
+	Stream        bool            `json:"stream"`
+	Tools         []wireTool      `json:"tools"`
+	ToolChoice    json.RawMessage `json:"tool_choice"`
+	Temperature   *float64        `json:"temperature"`
+	TopP          *float64        `json:"top_p"`
+	TopK          *int            `json:"top_k"`
+	StopSequences []string        `json:"stop_sequences"`
 }
 
 // wireBlock is the union of the content block shapes the relay understands.
@@ -80,9 +84,14 @@ func DecodeRequest(r io.Reader) (core.InferRequest, error) {
 	}
 
 	req := core.InferRequest{
-		Model:     wire.Model,
-		MaxTokens: wire.MaxTokens,
-		Stream:    wire.Stream,
+		Model:         wire.Model,
+		MaxTokens:     wire.MaxTokens,
+		Stream:        wire.Stream,
+		Temperature:   wire.Temperature,
+		TopP:          wire.TopP,
+		TopK:          wire.TopK,
+		StopSequences: wire.StopSequences,
+		IncludeUsage:  true, // the Anthropic wire always reports usage
 	}
 
 	if len(wire.System) > 0 {
