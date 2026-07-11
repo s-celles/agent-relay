@@ -1,0 +1,23 @@
+services:
+  relay:
+    build: .
+    container_name: agent-relay
+    restart: unless-stopped
+    environment:
+      # Inside the container 0.0.0.0 is fine; restrict exposure with `ports`
+      # below (e.g. bind the host side to a Tailscale IP).
+      RELAY_BIND: 0.0.0.0:18082
+      # Mandatory: the startup guard refuses a non-loopback bind without it.
+      RELAY_TOKENS: ${RELAY_TOKENS:?set RELAY_TOKENS (e.g. openssl rand -hex 32)}
+      RELAY_MAX_CONCURRENT: "10"
+      RELAY_REQUEST_TIMEOUT: 10m
+      RELAY_LOG_LEVEL: info
+    ports:
+      # Bind only on the private interface, e.g. the Tailscale address:
+      # - "100.64.0.5:18082:18082"
+      - "127.0.0.1:18082:18082"
+    volumes:
+      - claude-auth:/home/relay/.claude
+
+volumes:
+  claude-auth:
