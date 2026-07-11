@@ -24,7 +24,7 @@ import (
 
 // version is what the relay reports about itself — today only on the A2A Agent
 // Card, where a peer expects an agent to state its version.
-const version = "0.8.0"
+const version = "0.9.0"
 
 func main() {
 	if err := run(); err != nil {

@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-07-11
+
 ### Changed
 
 - **BREAKING — the session header is now `X-Relay-Session-Id`** (both
@@ -80,7 +82,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   formats, specified upstream and implemented by the official SDKs, so restating
   them here would only create a second source of truth that drifts. What *is*
   specified in full is the part only this relay defines — authentication, the
-  `X-Agentic-*` / `X-Session-Id` / `X-Request-Timeout` / `X-Agent-Traces` header
+  `X-Agentic-*` / `X-Relay-Session-Id` / `X-Request-Timeout` / `X-Agent-Traces` header
   contract, the backpressure and deadline status codes (503/429 with
   `Retry-After`, 504 as distinct from 502), and the retained-outputs endpoints.
   The A2A surface is excluded on purpose: its Agent Card already *is* the
