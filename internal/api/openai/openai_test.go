@@ -23,7 +23,7 @@ func TestDecodeRequest(t *testing.T) {
 			body: `{"model":"sonnet","messages":[{"role":"user","content":"hello"}]}`,
 			want: core.InferRequest{
 				Model:    "sonnet",
-				Messages: []core.Message{{Role: core.RoleUser, Content: "hello"}},
+				Messages: []core.Message{core.NewTextMessage(core.RoleUser, "hello")},
 			},
 		},
 		{
@@ -33,20 +33,48 @@ func TestDecodeRequest(t *testing.T) {
 				Model:    "m",
 				Stream:   true,
 				System:   "be brief",
-				Messages: []core.Message{{Role: core.RoleUser, Content: "q"}},
+				Messages: []core.Message{core.NewTextMessage(core.RoleUser, "q")},
 			},
 		},
 		{
-			name: "max_tokens",
-			body: `{"model":"m","max_tokens":42,"messages":[{"role":"user","content":"q"}]}`,
+			name: "assistant tool_calls and tool message",
+			body: `{"model":"m","messages":[
+				{"role":"user","content":"weather?"},
+				{"role":"assistant","content":"","tool_calls":[
+					{"id":"call_1","type":"function","function":{"name":"get_weather","arguments":"{\"city\":\"Paris\"}"}}
+				]},
+				{"role":"tool","tool_call_id":"call_1","content":"sunny"}
+			]}`,
 			want: core.InferRequest{
-				Model:     "m",
-				MaxTokens: 42,
-				Messages:  []core.Message{{Role: core.RoleUser, Content: "q"}},
+				Model: "m",
+				Messages: []core.Message{
+					core.NewTextMessage(core.RoleUser, "weather?"),
+					{Role: core.RoleAssistant, Blocks: []core.Block{
+						{Kind: core.BlockToolUse, ToolID: "call_1", ToolName: "get_weather", ToolInput: []byte(`{"city":"Paris"}`)},
+					}},
+					{Role: core.RoleUser, Blocks: []core.Block{
+						{Kind: core.BlockToolResult, ToolID: "call_1", Text: "sunny"},
+					}},
+				},
+			},
+		},
+		{
+			name: "function tools map to core tools",
+			body: `{"model":"m","messages":[{"role":"user","content":"q"}],"tools":[
+				{"type":"function","function":{"name":"get_weather","description":"d","parameters":{"type":"object"}}}
+			]}`,
+			want: core.InferRequest{
+				Model:    "m",
+				Messages: []core.Message{core.NewTextMessage(core.RoleUser, "q")},
+				Tools: []core.Tool{{
+					Name:        "get_weather",
+					Description: "d",
+					InputSchema: []byte(`{"type":"object"}`),
+				}},
 			},
 		},
 		{name: "invalid role", body: `{"model":"m","messages":[{"role":"function","content":"x"}]}`, wantErr: true},
-		{name: "no user messages", body: `{"model":"m","messages":[{"role":"system","content":"x"}]}`, wantErr: true},
+		{name: "no conversation messages", body: `{"model":"m","messages":[{"role":"system","content":"x"}]}`, wantErr: true},
 		{name: "malformed json", body: `[`, wantErr: true},
 	}
 
@@ -66,12 +94,27 @@ func TestDecodeRequest(t *testing.T) {
 				got.Stream != tc.want.Stream || got.MaxTokens != tc.want.MaxTokens {
 				t.Fatalf("got %+v, want %+v", got, tc.want)
 			}
+			if len(got.Tools) != len(tc.want.Tools) {
+				t.Fatalf("got %d tools, want %d", len(got.Tools), len(tc.want.Tools))
+			}
+			for i := range got.Tools {
+				if got.Tools[i].Name != tc.want.Tools[i].Name {
+					t.Fatalf("tool %d = %+v", i, got.Tools[i])
+				}
+			}
 			if len(got.Messages) != len(tc.want.Messages) {
 				t.Fatalf("got %d messages, want %d", len(got.Messages), len(tc.want.Messages))
 			}
 			for i := range got.Messages {
-				if got.Messages[i] != tc.want.Messages[i] {
-					t.Fatalf("message %d: got %+v, want %+v", i, got.Messages[i], tc.want.Messages[i])
+				g, w := got.Messages[i], tc.want.Messages[i]
+				if g.Role != w.Role || len(g.Blocks) != len(w.Blocks) {
+					t.Fatalf("message %d: got %+v, want %+v", i, g, w)
+				}
+				for j := range g.Blocks {
+					gb, wb := g.Blocks[j], w.Blocks[j]
+					if gb.Kind != wb.Kind || gb.Text != wb.Text || gb.ToolID != wb.ToolID || gb.ToolName != wb.ToolName {
+						t.Fatalf("message %d block %d: got %+v, want %+v", i, j, gb, wb)
+					}
 				}
 			}
 		})
@@ -138,7 +181,6 @@ func TestCollectSinkResponse(t *testing.T) {
 	}
 	var resp struct {
 		Object  string `json:"object"`
-		Model   string `json:"model"`
 		Choices []struct {
 			Message struct {
 				Role    string `json:"role"`

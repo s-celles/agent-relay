@@ -35,11 +35,17 @@ What is known to be missing or deferred, relative to the design document
 
 ## Later (v0.2+ candidates)
 
-- [ ] **Structured content.** Image and tool-use content blocks are
-  rejected today (v1 is text-only by design, spec §2). This is the blocker
-  for agentic clients: the Claude Agent SDK and Claude Code cannot use the
-  relay as their backend (via `ANTHROPIC_BASE_URL`) until `tool_use` /
-  `tool_result` blocks round-trip through the neutral model.
+- [x] **Structured content (wire level).** `tool_use`/`tool_result` blocks,
+  `tools[]`, and `tool_choice` now decode on both wire formats; responses can
+  carry `tool_use` blocks with streaming `input_json_delta`; the claude
+  backend flattens structured history into its transcript. Image blocks are
+  still rejected.
+- [ ] **Client-tool execution.** Even with the wire support above, the
+  claude CLI has no raw tool-calling mode (it runs its own agent loop), so
+  requests with `tools[]` are rejected with 400 on the claude backend and
+  agentic clients (Claude Agent SDK, Claude Code) still cannot use the relay
+  as their backend. Unblocking this requires either an upstream CLI feature
+  or a backend that fronts the raw model API.
 - [ ] **Second backend (Gemini or Codex).** The registry seam exists
   (REQ-BK-03) but is unexercised; a second adapter would prove it.
 - [ ] **Model-map routing across backends.** When a second backend lands,

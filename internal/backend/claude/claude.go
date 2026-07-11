@@ -92,21 +92,67 @@ func (b *Backend) mapModel(logical string) string {
 }
 
 // encodePrompt flattens the conversation into the text prompt the CLI reads
-// from stdin. A single user message passes through verbatim; multi-turn
-// history becomes a labeled transcript (v1: text only).
+// from stdin. A single user text message passes through verbatim; multi-turn
+// history becomes a labeled transcript. Structured blocks degrade
+// gracefully: tool_use and tool_result blocks are rendered as bracketed
+// text, so mixed histories still produce a coherent prompt.
 func (b *Backend) encodePrompt(req core.InferRequest) string {
-	if len(req.Messages) == 1 && req.Messages[0].Role == core.RoleUser {
-		return req.Messages[0].Content
+	if len(req.Messages) == 1 && req.Messages[0].Role == core.RoleUser && textOnly(req.Messages[0]) {
+		return req.Messages[0].PlainText()
+	}
+	// Resolve tool_use IDs to names so tool_result lines read naturally.
+	toolNames := map[string]string{}
+	for _, m := range req.Messages {
+		for _, b := range m.Blocks {
+			if b.Kind == core.BlockToolUse {
+				toolNames[b.ToolID] = b.ToolName
+			}
+		}
 	}
 	var sb strings.Builder
+	// Without framing, the model reads the transcript as a fresh question and
+	// ignores bracketed tool results; the preamble makes it a continuation.
+	sb.WriteString("Below is a conversation transcript. Bracketed [tool ...] lines are real tool calls and their results. Reply with the Assistant's next message only, using those results.\n\n")
 	for _, m := range req.Messages {
 		label := "Human"
 		if m.Role == core.RoleAssistant {
 			label = "Assistant"
 		}
-		fmt.Fprintf(&sb, "%s: %s\n\n", label, m.Content)
+		fmt.Fprintf(&sb, "%s: %s\n\n", label, renderBlocks(m.Blocks, toolNames))
 	}
 	return sb.String()
+}
+
+func textOnly(m core.Message) bool {
+	for _, b := range m.Blocks {
+		if b.Kind != core.BlockText {
+			return false
+		}
+	}
+	return true
+}
+
+func renderBlocks(blocks []core.Block, toolNames map[string]string) string {
+	var parts []string
+	for _, b := range blocks {
+		switch b.Kind {
+		case core.BlockText:
+			parts = append(parts, b.Text)
+		case core.BlockToolUse:
+			parts = append(parts, fmt.Sprintf("[called tool %s with input %s]", b.ToolName, string(b.ToolInput)))
+		case core.BlockToolResult:
+			name := toolNames[b.ToolID]
+			if name == "" {
+				name = b.ToolID
+			}
+			status := "returned"
+			if b.IsError {
+				status = "failed with"
+			}
+			parts = append(parts, fmt.Sprintf("[tool %s %s: %s]", name, status, b.Text))
+		}
+	}
+	return strings.Join(parts, "\n")
 }
 
 func (b *Backend) Infer(ctx context.Context, req core.InferRequest, sink core.EventSink) error {

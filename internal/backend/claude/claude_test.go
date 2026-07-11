@@ -56,7 +56,7 @@ func TestInferHappyPath(t *testing.T) {
 
 	err := b.Infer(context.Background(), core.InferRequest{
 		Model:    "sonnet",
-		Messages: []core.Message{{Role: core.RoleUser, Content: "hi"}},
+		Messages: []core.Message{core.NewTextMessage(core.RoleUser, "hi")},
 	}, sink)
 	if err != nil {
 		t.Fatalf("Infer: %v", err)
@@ -102,7 +102,7 @@ echo '{"type":"result","subtype":"success","result":"","usage":{"input_tokens":1
 	b := newTestBackend(t, core.BackendConfig{CLIPath: stubCLI(t, script)})
 	sink := &collectSink{}
 	err := b.Infer(context.Background(), core.InferRequest{
-		Messages: []core.Message{{Role: core.RoleUser, Content: "ping-marker-42"}},
+		Messages: []core.Message{core.NewTextMessage(core.RoleUser, "ping-marker-42")},
 	}, sink)
 	if err != nil {
 		t.Fatalf("Infer: %v", err)
@@ -139,7 +139,7 @@ echo '{"type":"result","subtype":"success","result":"","usage":{"input_tokens":1
 	})
 	sink := &collectSink{}
 	if err := b.Infer(context.Background(), core.InferRequest{
-		Messages: []core.Message{{Role: core.RoleUser, Content: "x"}},
+		Messages: []core.Message{core.NewTextMessage(core.RoleUser, "x")},
 	}, sink); err != nil {
 		t.Fatalf("Infer: %v", err)
 	}
@@ -165,7 +165,7 @@ sleep 60
 
 	start := time.Now()
 	err := b.Infer(ctx, core.InferRequest{
-		Messages: []core.Message{{Role: core.RoleUser, Content: "x"}},
+		Messages: []core.Message{core.NewTextMessage(core.RoleUser, "x")},
 	}, &collectSink{})
 	elapsed := time.Since(start)
 
@@ -180,7 +180,7 @@ sleep 60
 func TestInferReportsSpawnFailure(t *testing.T) {
 	b := newTestBackend(t, core.BackendConfig{CLIPath: "/nonexistent/claude-cli"})
 	err := b.Infer(context.Background(), core.InferRequest{
-		Messages: []core.Message{{Role: core.RoleUser, Content: "x"}},
+		Messages: []core.Message{core.NewTextMessage(core.RoleUser, "x")},
 	}, &collectSink{})
 	if err == nil {
 		t.Fatal("Infer should fail when the CLI cannot be spawned")
@@ -199,7 +199,7 @@ exit 1
 	b := newTestBackend(t, core.BackendConfig{CLIPath: stubCLI(t, script)})
 	sink := &collectSink{}
 	if err := b.Infer(context.Background(), core.InferRequest{
-		Messages: []core.Message{{Role: core.RoleUser, Content: "x"}},
+		Messages: []core.Message{core.NewTextMessage(core.RoleUser, "x")},
 	}, sink); err != nil {
 		t.Fatalf("Infer: %v", err)
 	}
@@ -229,7 +229,7 @@ func reportedCwd(t *testing.T, b core.Backend, agentic bool) string {
 	sink := &collectSink{}
 	if err := b.Infer(context.Background(), core.InferRequest{
 		Agentic:  agentic,
-		Messages: []core.Message{{Role: core.RoleUser, Content: "x"}},
+		Messages: []core.Message{core.NewTextMessage(core.RoleUser, "x")},
 	}, sink); err != nil {
 		t.Fatalf("Infer: %v", err)
 	}
@@ -376,7 +376,7 @@ func TestInferRejectsAgenticWhenDisabled(t *testing.T) {
 	sink := &collectSink{}
 	err := b.Infer(context.Background(), core.InferRequest{
 		Agentic:  true,
-		Messages: []core.Message{{Role: core.RoleUser, Content: "x"}},
+		Messages: []core.Message{core.NewTextMessage(core.RoleUser, "x")},
 	}, sink)
 	if err == nil {
 		t.Fatal("agentic request on a non-agentic backend must fail")
@@ -394,6 +394,40 @@ func TestBuildArgsModelPassthrough(t *testing.T) {
 	}
 }
 
+func TestEncodePromptFlattensToolBlocks(t *testing.T) {
+	// Structured history degrades gracefully: tool_use/tool_result blocks are
+	// rendered as text in the transcript, so mixed conversations still work.
+	b := newTestBackend(t, core.BackendConfig{CLIPath: "claude"}).(*Backend)
+	prompt := b.encodePrompt(core.InferRequest{
+		Messages: []core.Message{
+			core.NewTextMessage(core.RoleUser, "weather?"),
+			{Role: core.RoleAssistant, Blocks: []core.Block{
+				{Kind: core.BlockText, Text: "Checking."},
+				{Kind: core.BlockToolUse, ToolID: "toolu_1", ToolName: "get_weather", ToolInput: []byte(`{"city":"Paris"}`)},
+			}},
+			{Role: core.RoleUser, Blocks: []core.Block{
+				{Kind: core.BlockToolResult, ToolID: "toolu_1", Text: "sunny"},
+			}},
+			core.NewTextMessage(core.RoleUser, "and tomorrow?"),
+		},
+	})
+	for _, want := range []string{"weather?", "Checking.", "get_weather", `{"city":"Paris"}`, "sunny", "and tomorrow?"} {
+		if !strings.Contains(prompt, want) {
+			t.Errorf("prompt missing %q:\n%s", want, prompt)
+		}
+	}
+}
+
+func TestSingleTextMessagePassesThrough(t *testing.T) {
+	b := newTestBackend(t, core.BackendConfig{CLIPath: "claude"}).(*Backend)
+	prompt := b.encodePrompt(core.InferRequest{
+		Messages: []core.Message{core.NewTextMessage(core.RoleUser, "just this")},
+	})
+	if prompt != "just this" {
+		t.Errorf("single user text message must pass through verbatim, got %q", prompt)
+	}
+}
+
 func TestRegisteredInCore(t *testing.T) {
 	b, err := core.New("claude", core.BackendConfig{CLIPath: "claude"})
 	if err != nil {
@@ -408,6 +442,9 @@ func TestRegisteredInCore(t *testing.T) {
 	}
 	if caps.Agentic {
 		t.Error("agentic must be off by default (REQ-EXEC-01)")
+	}
+	if caps.ClientTools {
+		t.Error("the claude CLI cannot execute client-defined tools; ClientTools must be false")
 	}
 }
 

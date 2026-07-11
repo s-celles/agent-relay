@@ -17,17 +17,32 @@ type wireMessage struct {
 	Content json.RawMessage `json:"content"`
 }
 
-type messagesRequest struct {
-	Model     string          `json:"model"`
-	MaxTokens int             `json:"max_tokens"`
-	System    json.RawMessage `json:"system"`
-	Messages  []wireMessage   `json:"messages"`
-	Stream    bool            `json:"stream"`
+type wireTool struct {
+	Name        string          `json:"name"`
+	Description string          `json:"description"`
+	InputSchema json.RawMessage `json:"input_schema"`
 }
 
-type contentBlock struct {
-	Type string `json:"type"`
-	Text string `json:"text"`
+type messagesRequest struct {
+	Model      string          `json:"model"`
+	MaxTokens  int             `json:"max_tokens"`
+	System     json.RawMessage `json:"system"`
+	Messages   []wireMessage   `json:"messages"`
+	Stream     bool            `json:"stream"`
+	Tools      []wireTool      `json:"tools"`
+	ToolChoice json.RawMessage `json:"tool_choice"`
+}
+
+// wireBlock is the union of the content block shapes the relay understands.
+type wireBlock struct {
+	Type      string          `json:"type"`
+	Text      string          `json:"text"`
+	ID        string          `json:"id"`
+	Name      string          `json:"name"`
+	Input     json.RawMessage `json:"input"`
+	ToolUseID string          `json:"tool_use_id"`
+	Content   json.RawMessage `json:"content"`
+	IsError   bool            `json:"is_error"`
 }
 
 // DecodeRequest parses a POST /v1/messages body into a core.InferRequest.
@@ -58,36 +73,104 @@ func DecodeRequest(r io.Reader) (core.InferRequest, error) {
 		req.System = system
 	}
 
+	for _, t := range wire.Tools {
+		req.Tools = append(req.Tools, core.Tool{
+			Name:        t.Name,
+			Description: t.Description,
+			InputSchema: t.InputSchema,
+		})
+	}
+	if len(wire.ToolChoice) > 0 {
+		var tc struct {
+			Type string `json:"type"`
+		}
+		if err := json.Unmarshal(wire.ToolChoice, &tc); err == nil {
+			req.ToolChoice = tc.Type
+		}
+	}
+
 	for i, m := range wire.Messages {
 		role := core.Role(m.Role)
 		if role != core.RoleUser && role != core.RoleAssistant {
 			return core.InferRequest{}, fmt.Errorf("messages[%d]: unsupported role %q", i, m.Role)
 		}
-		text, err := textFromStringOrBlocks(m.Content)
+		blocks, err := decodeBlocks(m.Content)
 		if err != nil {
 			return core.InferRequest{}, fmt.Errorf("messages[%d]: %w", i, err)
 		}
-		req.Messages = append(req.Messages, core.Message{Role: role, Content: text})
+		req.Messages = append(req.Messages, core.Message{Role: role, Blocks: blocks})
 	}
 	return req, nil
 }
 
-// textFromStringOrBlocks accepts the two shapes the Messages API allows for
-// content: a bare string, or an array of typed blocks. v1 keeps text blocks
-// and joins them; other block types are rejected explicitly.
+// decodeBlocks accepts a bare string or an array of content blocks and maps
+// them onto the neutral block model.
+func decodeBlocks(raw json.RawMessage) ([]core.Block, error) {
+	var s string
+	if err := json.Unmarshal(raw, &s); err == nil {
+		return []core.Block{{Kind: core.BlockText, Text: s}}, nil
+	}
+	var wire []wireBlock
+	if err := json.Unmarshal(raw, &wire); err != nil {
+		return nil, fmt.Errorf("content must be a string or an array of blocks: %w", err)
+	}
+	var blocks []core.Block
+	for _, b := range wire {
+		switch b.Type {
+		case "text":
+			blocks = append(blocks, core.Block{Kind: core.BlockText, Text: b.Text})
+		case "tool_use":
+			blocks = append(blocks, core.Block{
+				Kind:      core.BlockToolUse,
+				ToolID:    b.ID,
+				ToolName:  b.Name,
+				ToolInput: b.Input,
+			})
+		case "tool_result":
+			text, err := toolResultText(b.Content)
+			if err != nil {
+				return nil, fmt.Errorf("tool_result %q: %w", b.ToolUseID, err)
+			}
+			blocks = append(blocks, core.Block{
+				Kind:    core.BlockToolResult,
+				ToolID:  b.ToolUseID,
+				Text:    text,
+				IsError: b.IsError,
+			})
+		case "thinking", "redacted_thinking":
+			// Clients echo thinking blocks back per the Messages API contract;
+			// the relay has nothing to do with them — drop silently.
+		default:
+			return nil, fmt.Errorf("unsupported content block type %q", b.Type)
+		}
+	}
+	return blocks, nil
+}
+
+// toolResultText flattens a tool_result's content (absent, string, or an
+// array of text blocks) into plain text.
+func toolResultText(raw json.RawMessage) (string, error) {
+	if len(raw) == 0 {
+		return "", nil
+	}
+	return textFromStringOrBlocks(raw)
+}
+
+// textFromStringOrBlocks accepts a bare string or an array of typed text
+// blocks and joins them.
 func textFromStringOrBlocks(raw json.RawMessage) (string, error) {
 	var s string
 	if err := json.Unmarshal(raw, &s); err == nil {
 		return s, nil
 	}
-	var blocks []contentBlock
+	var blocks []wireBlock
 	if err := json.Unmarshal(raw, &blocks); err != nil {
-		return "", fmt.Errorf("content must be a string or an array of text blocks: %w", err)
+		return "", fmt.Errorf("expected a string or an array of text blocks: %w", err)
 	}
 	parts := make([]string, 0, len(blocks))
 	for _, b := range blocks {
 		if b.Type != "text" {
-			return "", fmt.Errorf("unsupported content block type %q (v1 is text-only)", b.Type)
+			return "", fmt.Errorf("unsupported block type %q (text only here)", b.Type)
 		}
 		parts = append(parts, b.Text)
 	}

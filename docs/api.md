@@ -30,9 +30,13 @@ Request body (v1 supports text content only):
 }
 ```
 
-- `content` may be a string or an array of `{"type":"text","text":...}`
-  blocks; other block types are rejected with 400.
+- `content` may be a string or an array of content blocks. Supported block
+  types: `text`, `tool_use` (assistant turns), and `tool_result` (user
+  turns). `thinking` blocks echoed back by clients are dropped silently.
+  `image` and other block types are rejected with 400.
 - Roles are limited to `user` and `assistant`.
+- `tools` and `tool_choice` are decoded, but serving them requires a backend
+  that supports client-defined tools — see "Client-defined tools" below.
 
 **Streaming** (`"stream": true`) returns `text/event-stream` with the
 standard Anthropic event sequence, flushed per event: `message_start`,
@@ -40,8 +44,23 @@ standard Anthropic event sequence, flushed per event: `message_start`,
 `content_block_stop`, `message_delta` (stop reason + usage), `message_stop`.
 Backend failures mid-stream are delivered as an `error` event.
 
-**Non-streaming** returns a single `message` object with one text content
-block and token usage.
+**Non-streaming** returns a single `message` object with text content blocks
+and token usage. When a backend emits tool calls, responses carry `tool_use`
+blocks (`content_block_start` + `input_json_delta` when streaming) and
+`stop_reason: "tool_use"`.
+
+### Client-defined tools
+
+The wire format fully supports structured content: `tool_use`/`tool_result`
+blocks in conversation *history* are accepted on any backend (the claude
+backend flattens them into its text transcript). However, a request carrying
+`tools[]` — asking the model to call the *caller's* tools and stop — is
+rejected with 400 unless the backend reports client-tool support.
+
+The claude CLI backend does **not**: the CLI runs its own agent loop with its
+own tools and has no raw tool-calling mode. In practice this means agentic
+clients (the Claude Agent SDK, Claude Code) still cannot use the relay as
+their backend; classic chat clients are unaffected.
 
 ## `POST /v1/chat/completions` — OpenAI Chat Completions
 

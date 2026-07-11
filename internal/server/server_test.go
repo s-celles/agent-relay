@@ -18,11 +18,12 @@ type fakeBackend struct {
 	calls       atomic.Int64
 	lastAgentic atomic.Bool
 	block       bool
+	clientTools bool
 }
 
 func (f *fakeBackend) Name() string { return "fake" }
 func (f *fakeBackend) Capabilities() core.Capabilities {
-	return core.Capabilities{Streaming: true}
+	return core.Capabilities{Streaming: true, ClientTools: f.clientTools}
 }
 func (f *fakeBackend) Infer(ctx context.Context, req core.InferRequest, sink core.EventSink) error {
 	f.calls.Add(1)
@@ -330,6 +331,61 @@ func TestAgenticHeaderRejectedWhenAgenticDisabled(t *testing.T) {
 	}
 	if fb.calls.Load() != 0 {
 		t.Fatal("backend must not run for a rejected agentic request")
+	}
+}
+
+const toolsBody = `{"model":"sonnet","max_tokens":100,
+	"tools":[{"name":"get_weather","description":"d","input_schema":{"type":"object"}}],
+	"messages":[{"role":"user","content":"hi"}]}`
+
+func TestClientToolsRejectedWhenBackendCannotServeThem(t *testing.T) {
+	fb := &fakeBackend{} // ClientTools: false
+	h := newTestServer(t, fb)
+	req := httptest.NewRequest("POST", "/v1/messages", strings.NewReader(toolsBody))
+	req.Header.Set("x-api-key", "good-token")
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400 for tools[] on a non-tool backend", rec.Code)
+	}
+	if !strings.Contains(rec.Body.String(), "tool") {
+		t.Fatalf("error body should explain the tools limitation: %s", rec.Body.String())
+	}
+	if fb.calls.Load() != 0 {
+		t.Fatal("backend must not run for a rejected tools request")
+	}
+}
+
+func TestClientToolsAcceptedWhenBackendSupportsThem(t *testing.T) {
+	fb := &fakeBackend{clientTools: true}
+	h := newTestServer(t, fb)
+	req := httptest.NewRequest("POST", "/v1/messages", strings.NewReader(toolsBody))
+	req.Header.Set("x-api-key", "good-token")
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body: %s", rec.Code, rec.Body.String())
+	}
+	if fb.calls.Load() != 1 {
+		t.Fatal("backend should have served the tools request")
+	}
+}
+
+func TestStructuredHistoryAccepted(t *testing.T) {
+	// tool_use/tool_result blocks in history are fine on any backend — only
+	// client-defined tools[] require backend support.
+	h := newTestServer(t, &fakeBackend{})
+	body := `{"model":"sonnet","max_tokens":100,"messages":[
+		{"role":"user","content":"weather?"},
+		{"role":"assistant","content":[{"type":"tool_use","id":"t1","name":"f","input":{}}]},
+		{"role":"user","content":[{"type":"tool_result","tool_use_id":"t1","content":"sunny"}]}
+	]}`
+	req := httptest.NewRequest("POST", "/v1/messages", strings.NewReader(body))
+	req.Header.Set("x-api-key", "good-token")
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body: %s", rec.Code, rec.Body.String())
 	}
 }
 

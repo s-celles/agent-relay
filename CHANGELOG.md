@@ -26,6 +26,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `ROADMAP.md`: known gaps and deferred features relative to the design
   document.
 
+### Changed
+
+- Structured content support: the neutral model now carries content blocks
+  (`text`, `tool_use`, `tool_result`) instead of plain strings. Both wire
+  formats decode structured history, `tools[]`, and `tool_choice`; Anthropic
+  responses can stream `tool_use` blocks (`input_json_delta`) and report
+  `stop_reason: "tool_use"`. The claude backend flattens structured history
+  into its text transcript; requests with client-defined `tools[]` are
+  rejected with 400 on backends without client-tool support (the claude CLI
+  has no raw tool-calling mode).
+
 ### Fixed
 
 - Claude backend: when the CLI reports an error result line (e.g. "Credit

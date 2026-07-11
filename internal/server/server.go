@@ -29,6 +29,7 @@ type server struct {
 	logger        *slog.Logger
 	agentic       core.AgenticConfig
 	agenticTokens [][]byte
+	caps          core.Capabilities
 }
 
 // Option customizes the server (currently: logger injection).
@@ -54,6 +55,7 @@ func New(cfg config.Config, backend core.Backend, opts ...Option) (http.Handler,
 		logger:        slog.Default(),
 		agentic:       cfg.Agentic,
 		agenticTokens: cfg.AgenticTokens,
+		caps:          backend.Capabilities(),
 	}
 	for _, o := range opts {
 		o(s)
@@ -75,6 +77,19 @@ func New(cfg config.Config, backend core.Backend, opts ...Option) (http.Handler,
 func (s *server) handleHealth(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	_, _ = io.WriteString(w, `{"status":"ok"}`+"\n")
+}
+
+// checkTools rejects requests carrying client-defined tools when the backend
+// cannot serve them: the model would never call the caller's tools, so
+// failing loudly beats a silently degraded conversation. Structured history
+// (tool_use/tool_result blocks) is always accepted.
+func (s *server) checkTools(w http.ResponseWriter, req core.InferRequest, writeErr func(http.ResponseWriter, int, string)) bool {
+	if len(req.Tools) == 0 || s.caps.ClientTools {
+		return true
+	}
+	writeErr(w, http.StatusBadRequest,
+		"this backend cannot execute client-defined tools: the claude CLI runs its own agent loop and has no raw tool-calling mode; remove tools[] or use a backend with client-tool support")
+	return false
 }
 
 // authorizeAgentic decides whether this request may run agentically
@@ -116,6 +131,9 @@ func (s *server) handleMessages(w http.ResponseWriter, r *http.Request) {
 		anthropic.WriteError(w, http.StatusBadRequest, err.Error())
 		return
 	}
+	if !s.checkTools(w, req, anthropic.WriteError) {
+		return
+	}
 	agentic, ok := s.authorizeAgentic(w, r, anthropic.WriteError)
 	if !ok {
 		return
@@ -137,6 +155,9 @@ func (s *server) handleChat(w http.ResponseWriter, r *http.Request) {
 	req, err := openai.DecodeRequest(r.Body)
 	if err != nil {
 		openai.WriteError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if !s.checkTools(w, req, openai.WriteError) {
 		return
 	}
 	agentic, ok := s.authorizeAgentic(w, r, openai.WriteError)

@@ -12,9 +12,29 @@ import (
 	"github.com/s-celles/agent-relay/internal/core"
 )
 
+type wireToolCall struct {
+	ID       string `json:"id"`
+	Type     string `json:"type"`
+	Function struct {
+		Name      string `json:"name"`
+		Arguments string `json:"arguments"`
+	} `json:"function"`
+}
+
 type wireMessage struct {
-	Role    string `json:"role"`
-	Content string `json:"content"`
+	Role       string         `json:"role"`
+	Content    string         `json:"content"`
+	ToolCalls  []wireToolCall `json:"tool_calls"`
+	ToolCallID string         `json:"tool_call_id"`
+}
+
+type wireTool struct {
+	Type     string `json:"type"`
+	Function struct {
+		Name        string          `json:"name"`
+		Description string          `json:"description"`
+		Parameters  json.RawMessage `json:"parameters"`
+	} `json:"function"`
 }
 
 type chatRequest struct {
@@ -22,11 +42,13 @@ type chatRequest struct {
 	Messages  []wireMessage `json:"messages"`
 	MaxTokens int           `json:"max_tokens"`
 	Stream    bool          `json:"stream"`
+	Tools     []wireTool    `json:"tools"`
 }
 
 // DecodeRequest parses a POST /v1/chat/completions body into a
 // core.InferRequest. OpenAI system messages map onto the neutral System
-// field; multiple system messages are concatenated.
+// field; `tool` messages become tool_result blocks in user turns; assistant
+// `tool_calls` become tool_use blocks.
 func DecodeRequest(r io.Reader) (core.InferRequest, error) {
 	var wire chatRequest
 	if err := json.NewDecoder(r).Decode(&wire); err != nil {
@@ -41,22 +63,51 @@ func DecodeRequest(r io.Reader) (core.InferRequest, error) {
 		MaxTokens: wire.MaxTokens,
 		Stream:    wire.Stream,
 	}
+	for _, t := range wire.Tools {
+		if t.Type != "function" {
+			return core.InferRequest{}, fmt.Errorf("unsupported tool type %q", t.Type)
+		}
+		req.Tools = append(req.Tools, core.Tool{
+			Name:        t.Function.Name,
+			Description: t.Function.Description,
+			InputSchema: t.Function.Parameters,
+		})
+	}
+
 	var system []string
 	for i, m := range wire.Messages {
 		switch m.Role {
 		case "system", "developer":
 			system = append(system, m.Content)
 		case "user":
-			req.Messages = append(req.Messages, core.Message{Role: core.RoleUser, Content: m.Content})
+			req.Messages = append(req.Messages, core.NewTextMessage(core.RoleUser, m.Content))
 		case "assistant":
-			req.Messages = append(req.Messages, core.Message{Role: core.RoleAssistant, Content: m.Content})
+			var blocks []core.Block
+			if m.Content != "" {
+				blocks = append(blocks, core.Block{Kind: core.BlockText, Text: m.Content})
+			}
+			for _, tc := range m.ToolCalls {
+				blocks = append(blocks, core.Block{
+					Kind:      core.BlockToolUse,
+					ToolID:    tc.ID,
+					ToolName:  tc.Function.Name,
+					ToolInput: json.RawMessage(tc.Function.Arguments),
+				})
+			}
+			req.Messages = append(req.Messages, core.Message{Role: core.RoleAssistant, Blocks: blocks})
+		case "tool":
+			req.Messages = append(req.Messages, core.Message{Role: core.RoleUser, Blocks: []core.Block{{
+				Kind:   core.BlockToolResult,
+				ToolID: m.ToolCallID,
+				Text:   m.Content,
+			}}})
 		default:
 			return core.InferRequest{}, fmt.Errorf("messages[%d]: unsupported role %q", i, m.Role)
 		}
 	}
 	req.System = strings.Join(system, "\n")
 	if len(req.Messages) == 0 {
-		return core.InferRequest{}, errors.New("at least one user or assistant message is required")
+		return core.InferRequest{}, errors.New("at least one user, assistant, or tool message is required")
 	}
 	return req, nil
 }
