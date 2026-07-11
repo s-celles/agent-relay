@@ -1296,3 +1296,117 @@ func TestNoTokensConfiguredAllowsLoopbackCallers(t *testing.T) {
 		t.Fatalf("status = %d, want 200", rec.Code)
 	}
 }
+
+// --- Agent2Agent surface -----------------------------------------------------
+
+const a2aSendBody = `{"jsonrpc":"2.0","id":1,"method":"SendMessage","params":
+	{"message":{"messageId":"m1","role":"ROLE_USER","parts":[{"text":"hi"}]}}}`
+
+func TestA2AIsOffByDefault(t *testing.T) {
+	h := newTestServer(t, &fakeBackend{})
+	for _, path := range []string{"/a2a", "/.well-known/agent-card.json"} {
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest("POST", path, strings.NewReader(a2aSendBody))
+		req.Header.Set("Authorization", "Bearer good-token")
+		h.ServeHTTP(rec, req)
+		if rec.Code != http.StatusNotFound && rec.Code != http.StatusMethodNotAllowed {
+			t.Errorf("%s = %d; A2A must publish nothing unless RELAY_A2A_ENABLED", path, rec.Code)
+		}
+	}
+}
+
+func withA2A(cfg *config.Config) {
+	cfg.A2A = true
+	cfg.A2AModel = "sonnet"
+	cfg.PublicURL = "http://relay.test"
+}
+
+func TestA2ARequiresTheCallerToken(t *testing.T) {
+	h := newTestServer(t, &fakeBackend{}, withA2A)
+
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest("POST", "/a2a", strings.NewReader(a2aSendBody)))
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("unauthenticated POST /a2a = %d, want 401", rec.Code)
+	}
+	// The error must still be JSON-RPC shaped, or an A2A client cannot parse it.
+	var env map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &env); err != nil {
+		t.Fatalf("401 body is not JSON: %v", err)
+	}
+	if env["jsonrpc"] != "2.0" || env["error"] == nil {
+		t.Errorf("401 body = %s, want a JSON-RPC error envelope", rec.Body)
+	}
+}
+
+func TestA2ACardIsPublicAndDescribesTheServedModels(t *testing.T) {
+	// Discovery is the point of a card: a peer reads it before it holds a
+	// credential, so it is served without auth — which is why A2A is opt-in.
+	h := newTestServer(t, &fakeBackend{}, withA2A)
+
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest("GET", "/.well-known/agent-card.json", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET agent card = %d, want 200", rec.Code)
+	}
+	var card struct {
+		Name                string `json:"name"`
+		Description         string `json:"description"`
+		SupportedInterfaces []struct {
+			URL             string `json:"url"`
+			ProtocolBinding string `json:"protocolBinding"`
+		} `json:"supportedInterfaces"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &card); err != nil {
+		t.Fatalf("decode card: %v", err)
+	}
+	if card.Name != "agent-relay" {
+		t.Errorf("name = %q", card.Name)
+	}
+	if len(card.SupportedInterfaces) != 1 || card.SupportedInterfaces[0].URL != "http://relay.test/a2a" {
+		t.Errorf("interfaces = %+v; the card must advertise RELAY_PUBLIC_URL, not the bind address",
+			card.SupportedInterfaces)
+	}
+	if !strings.Contains(card.Description, "sonnet") {
+		t.Errorf("description = %q, want the backend's models named", card.Description)
+	}
+}
+
+func TestA2ATaskReachesTheBackend(t *testing.T) {
+	fb := &fakeBackend{}
+	h := newTestServer(t, fb, withA2A)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("POST", "/a2a", strings.NewReader(a2aSendBody))
+	req.Header.Set("Authorization", "Bearer good-token")
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("POST /a2a = %d: %s", rec.Code, rec.Body)
+	}
+	var env struct {
+		Result struct {
+			Task struct {
+				Status    struct{ State string } `json:"status"`
+				Artifacts []struct {
+					Parts []struct {
+						Text string `json:"text"`
+					} `json:"parts"`
+				} `json:"artifacts"`
+			} `json:"task"`
+		} `json:"result"`
+		Error any `json:"error"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &env); err != nil {
+		t.Fatalf("decode: %v (%s)", err, rec.Body)
+	}
+	if env.Error != nil {
+		t.Fatalf("JSON-RPC error: %v", env.Error)
+	}
+	if env.Result.Task.Status.State != "TASK_STATE_COMPLETED" {
+		t.Errorf("state = %q", env.Result.Task.Status.State)
+	}
+	if len(env.Result.Task.Artifacts) == 0 || env.Result.Task.Artifacts[0].Parts[0].Text != "Hello" {
+		t.Errorf("artifacts = %+v, want the backend's answer", env.Result.Task.Artifacts)
+	}
+}

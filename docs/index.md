@@ -5,6 +5,7 @@ A self-hosted, authenticating **inference relay** that fronts agent CLIs
 
 - `POST /v1/messages` — Anthropic Messages API (streaming SSE and non-streaming)
 - `POST /v1/chat/completions` — OpenAI Chat Completions API
+- `POST /a2a` — [Agent2Agent](a2a.md) tasks (opt-in), with a public Agent Card
 - `GET /health` — unauthenticated liveness probe
 - `GET /v1/metrics` — minimal JSON metrics
 
@@ -50,6 +51,7 @@ curl -N http://127.0.0.1:18082/v1/messages \
 - [Execution modes](execution-modes.md) — inference vs agentic, in depth
 - [Configuration](configuration.md) — environment variables and startup guards
 - [HTTP API](api.md) — endpoints, wire formats, error shapes
+- [Agent2Agent (A2A)](a2a.md) — the relay as an A2A agent: tasks, artifacts, contexts
 - [API vs relay limitations](limitations.md) — what the CLI backend cannot do
 - [Deployment](deployment.md) — Docker, docker-compose, NixOS notes
 - [Testing](testing.md) — test strategy (no tokens are ever spent in tests)

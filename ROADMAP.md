@@ -156,6 +156,25 @@ emits and the relay currently drops.
   and ceiling) and echoed back as applied. An expired deadline answers 504
   (not 502), so a client can tell it apart from a backend failure.
 
+## Interoperability
+
+- [x] **Agent2Agent (A2A) adapter.** The relay is now an A2A *agent* (opt-in,
+  `RELAY_A2A_ENABLED`): Agent Card, JSON-RPC endpoint, tasks, streaming,
+  artifacts, cancellation. It is a third wire adapter, not a backend and not a
+  step toward routing — the relay does not *call* other agents. What A2A buys
+  that the Anthropic and OpenAI wires cannot express: a long-running task with
+  a lifecycle, files returned as artifacts, and a `contextId` that carries both
+  the backend session and its workspace. Built on the official `a2a-go` SDK,
+  the project's first dependency (see the CHANGELOG for why).
+
+  Not implemented: push notifications, gRPC/HTTP+JSON bindings, multi-tenancy.
+
+- [ ] **Client-defined tools over A2A.** They work on the other two wires via
+  the MCP bridge; over A2A they need a declared protocol extension (an
+  extension URI on the card, and the parked tool call surfaced as
+  `TASK_STATE_INPUT_REQUIRED` — which maps onto our parked subprocess almost
+  exactly). Worth doing only if a peer actually asks for it.
+
 ## Wire-compatibility polish
 
 - [x] Signal (rather than silently drop) unsupported sampling parameters:

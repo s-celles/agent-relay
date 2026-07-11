@@ -10,6 +10,7 @@ A self-hosted, authenticating **inference relay** that fronts agent CLIs
 
 - `POST /v1/messages` — Anthropic Messages API (streaming SSE and non-streaming)
 - `POST /v1/chat/completions` — OpenAI Chat Completions API
+- `POST /a2a` — [Agent2Agent](docs/a2a.md) tasks (opt-in), with a public Agent Card
 - `GET /health` — unauthenticated liveness probe
 - `GET /v1/metrics` — minimal JSON metrics
 

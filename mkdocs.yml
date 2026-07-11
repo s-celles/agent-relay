@@ -33,6 +33,7 @@ nav:
   - Execution modes: execution-modes.md
   - Configuration: configuration.md
   - HTTP API: api.md
+  - Agent2Agent (A2A): a2a.md
   - API vs relay limitations: limitations.md
   - Deployment: deployment.md
   - Testing: testing.md

@@ -7,6 +7,69 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-07-11
+
+### Added
+
+- **Agent2Agent (A2A) protocol adapter** (`internal/api/a2a`), opt-in via
+  `RELAY_A2A_ENABLED`. A third wire adapter next to the Anthropic and OpenAI
+  ones — the relay becomes an A2A *agent*, not an A2A client: it does not call
+  other agents, so this is not a step toward routing.
+  - `GET /.well-known/agent-card.json` — the Agent Card, served **without
+    auth** (discovery is what a card is for). It advertises the JSON-RPC
+    binding, streaming, the models served, and the agentic skill only when
+    agentic execution is enabled.
+  - `POST /a2a` — JSON-RPC 2.0 (`SendMessage`, `SendStreamingMessage`,
+    `GetTask`, `CancelTask`, `ListTasks`), behind the same bearer auth, rate
+    limit, concurrency cap, timeout and cost accounting as every other
+    inference endpoint.
+  - **Tasks map onto agentic execution.** An A2A task carrying the agentic
+    credential (`X-Agentic-Authorization`, as on the other wires) runs in a
+    retained workspace, and every file the agent produced comes back as an
+    artifact — a `url` part pointing at `/v1/outputs/{id}/files/{path}`, since
+    A2A defines no download endpoint.
+  - **`contextId` is memory *and* filesystem.** Echoing it on the next message
+    resumes the backend session and reuses the same workspace, so a peer can
+    ask the agent to extend a file it wrote in an earlier task. Neither the
+    Anthropic nor the OpenAI wire can express that.
+  - `CancelTask` cancels the dispatch context — for the `claude` backend, a
+    process-group kill of the subprocess.
+  - A backend failure is a `TASK_STATE_FAILED` task, not a JSON-RPC error: the
+    error channel is reserved for protocol and authorization faults.
+  - `url` parts in an inbound message are **refused** — fetching a
+    peer-supplied URL would make the relay an SSRF primitive. Attachments ride
+    as `raw` parts through the existing attachment bridge.
+- `RELAY_A2A_ENABLED`, `RELAY_A2A_MODEL` (A2A carries no model field; peers may
+  still set `message.metadata.model`) and `RELAY_PUBLIC_URL` (the origin peers
+  reach the relay on — what the card advertises and what artifact URLs are
+  built from). A2A on a non-loopback bind that still advertises a loopback
+  `RELAY_PUBLIC_URL` refuses to start.
+- `docs/a2a.md`, and an entry in `SECURITY.md`: the Agent Card is a deliberate,
+  unauthenticated disclosure of what this host serves.
+- `upstream-bugs.md`: two defects in the A2A specification's prose, which
+  contradicts its own normative proto (the sample Agent Card uses `security`
+  where the proto says `security_requirements`; the v1.0 migration guide invents
+  `taskStatusUpdate`/`taskArtifactUpdate` event names and `Task.createdAt` /
+  `Task.lastModified` fields that do not exist).
+
+### Changed
+
+- **The stdlib-only rule is now scoped, not absolute.** The A2A adapter depends
+  on the official [`a2a-go`](https://github.com/a2aproject/a2a-go) SDK — the
+  project's first and only third-party dependency (JSON-RPC binding only: no
+  gRPC, no protobuf). A2A v1.0 was a breaking redesign of 0.3 and keeps moving;
+  hand-rolling the wire would have meant our tests validated *our reading* of
+  the spec rather than the spec — and the spec's prose is demonstrably wrong in
+  places (see `upstream-bugs.md`). NFR-INSPECT-01 now reads: the core, the
+  backends and the security path remain standard-library only.
+- Agentic authorization is decided in one place (`authorizeAgenticCred`), shared
+  by the Anthropic, OpenAI and A2A surfaces, so they cannot drift apart on the
+  decision that matters most.
+- Auth and rate-limit rejections are now rendered in the wire format of the
+  endpoint that was called: a rejected A2A call reads as a JSON-RPC error, not
+  as an Anthropic one.
+- Go 1.25 is now the minimum (the SDK requires it).
+
 ## [0.7.0] - 2026-07-11
 
 ### Added

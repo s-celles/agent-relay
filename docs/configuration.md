@@ -28,6 +28,9 @@ failure aborts startup — the relay never limps along on a half-read config.
 | `RELAY_OUTPUTS_DIR` | *(system temp)* | Where retained agentic outputs (`X-Agentic-Keep-Outputs`) are stored. |
 | `RELAY_OUTPUTS_TTL` | `10m` | How long retained outputs survive before being swept. |
 | `RELAY_RATE_LIMIT_RPM` | `0` (off) | Sustained requests per minute allowed **per caller** (token bucket, burst = the same value). Exceeding it returns 429 with `Retry-After`. |
+| `RELAY_A2A_ENABLED` | `false` | Serve the [Agent2Agent](a2a.md) adapter: `POST /a2a` (JSON-RPC, authenticated) and a **public** Agent Card at `/.well-known/agent-card.json`. Off by default: the card is unauthenticated and names the models served. |
+| `RELAY_A2A_MODEL` | `sonnet` | Model for A2A messages that name none — A2A has no model field (peers may still set `message.metadata.model`). |
+| `RELAY_PUBLIC_URL` | `http://$RELAY_BIND` | The origin **peers** reach this relay on: what the Agent Card advertises and what artifact URLs are built from. Required when A2A is on and the bind address is not loopback. |
 
 The `RELAY_AGENTIC_*` variables switch the relay between its two execution
 modes; [execution-modes.md](execution-modes.md) explains what each mode can

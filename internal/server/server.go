@@ -1,11 +1,11 @@
 // Package server wires the HTTP mux: routing, auth, and the handlers that
-// bridge wire decoding to core dispatch. Standard library only — no
-// framework, small audit surface (NFR-INSPECT-01).
+// bridge wire decoding to core dispatch. No framework, small audit surface
+// (NFR-INSPECT-01): the only third-party code reachable from here is the A2A
+// SDK, behind the opt-in adapter in internal/api/a2a.
 package server
 
 import (
 	"context"
-	"crypto/subtle"
 	"encoding/json"
 	"errors"
 	"io"
@@ -167,6 +167,18 @@ func (s *server) accountUsage(w http.ResponseWriter, r *http.Request, u core.Usa
 	)
 }
 
+// accountUsageOn is the same accounting for a request served outside the
+// plain HTTP handlers (an A2A task, which outlives no single response writer).
+func (s *server) accountUsageOn(path string, u core.Usage) {
+	s.metrics.RecordUsage(u.InputTokens, u.OutputTokens, u.CostUSD)
+	s.logger.Info("request usage",
+		"path", path,
+		"input_tokens", u.InputTokens,
+		"output_tokens", u.OutputTokens,
+		"cost_usd", u.CostUSD,
+	)
+}
+
 type server struct {
 	dispatcher     *core.Dispatcher
 	metrics        *obs.Metrics
@@ -177,6 +189,8 @@ type server struct {
 	bridge         *toolbridge.Bridge
 	toolSessions   *toolSessions
 	toolSessionTTL time.Duration
+	// version is what the A2A Agent Card reports as this agent's version.
+	version string
 	// maxTokensWarn gates the max_tokens-not-enforced warning to once per
 	// process: the Anthropic wire makes max_tokens mandatory, so warning on
 	// every request would flood the log.
@@ -191,6 +205,11 @@ type Option func(*server)
 
 func WithLogger(l *slog.Logger) Option {
 	return func(s *server) { s.logger = l }
+}
+
+// WithVersion sets the relay version the A2A Agent Card advertises.
+func WithVersion(v string) Option {
+	return func(s *server) { s.version = v }
 }
 
 // New builds the full HTTP handler for the given validated config and
@@ -242,6 +261,7 @@ func NewRouted(cfg config.Config, backend core.Backend, routes map[string]core.B
 		bridge:         bridge,
 		toolSessions:   newToolSessions(),
 		toolSessionTTL: toolTTL,
+		version:        "dev",
 	}
 	for _, o := range opts {
 		o(s)
@@ -252,9 +272,12 @@ func NewRouted(cfg config.Config, backend core.Backend, routes map[string]core.B
 		return RequireBearer(cfg.Tokens, s.metrics.Unauthorized, anthropic.WriteError, next)
 	}
 	// Inference endpoints are what spend the subscription, so they carry the
-	// quota; /health and /v1/metrics do not.
+	// quota; /health and /v1/metrics do not. The error writer belongs to the
+	// endpoint's wire format — a rejected A2A call must still read as JSON-RPC,
+	// not as an Anthropic error.
 	throttledAuth := func(next http.Handler, writeErr func(http.ResponseWriter, int, string)) http.Handler {
-		return auth(RateLimit(limiter, s.metrics.RateLimited, writeErr, next))
+		throttled := RateLimit(limiter, s.metrics.RateLimited, writeErr, next)
+		return RequireBearer(cfg.Tokens, s.metrics.Unauthorized, writeErr, throttled)
 	}
 
 	mux := http.NewServeMux()
@@ -265,6 +288,12 @@ func NewRouted(cfg config.Config, backend core.Backend, routes map[string]core.B
 	mux.Handle("GET /v1/outputs/{id}", auth(http.HandlerFunc(s.handleOutputsList)))
 	mux.Handle("GET /v1/outputs/{id}/files/{path...}", auth(http.HandlerFunc(s.handleOutputsDownload)))
 	mux.Handle("DELETE /v1/outputs/{id}", auth(http.HandlerFunc(s.handleOutputsDelete)))
+
+	// Agent2Agent is opt-in: it publishes a card that names the models served
+	// and says whether this host runs an agent, so an operator asks for it.
+	if cfg.A2A {
+		s.mountA2A(mux, cfg, servedModels(cfg, backend, routes), throttledAuth)
+	}
 
 	return obs.WithRequestID(s.logger, mux), nil
 }
@@ -571,34 +600,16 @@ func (s *server) authorizeAgentic(w http.ResponseWriter, r *http.Request, writeE
 		cred = tok
 	}
 
-	switch {
-	case cred == "":
-		// No agentic credential: agentic only in the legacy all-requests
-		// posture (enabled without per-request authz, loopback-only by
-		// Config.Validate); otherwise plain inference.
-		if s.agentic.Enabled && !s.agentic.PerRequestAuthz {
-			s.auditAgentic(w, r)
-			return true, true
-		}
-		return false, true
-	case !s.agentic.Enabled:
-		s.denyAgentic(w, r, "agentic execution disabled")
-		writeErr(w, http.StatusForbidden, "agentic execution is disabled on this relay")
-		return false, false
-	case !s.agentic.PerRequestAuthz:
-		s.auditAgentic(w, r)
-		return true, true
-	default:
-		for _, t := range s.agenticTokens {
-			if subtle.ConstantTimeCompare([]byte(cred), t) == 1 {
-				s.auditAgentic(w, r)
-				return true, true
-			}
-		}
-		s.denyAgentic(w, r, "invalid credential")
-		writeErr(w, http.StatusForbidden, "invalid agentic authorization")
+	agentic, err := s.authorizeAgenticCred(cred)
+	if err != nil {
+		s.denyAgentic(w, r, err.Error())
+		writeErr(w, http.StatusForbidden, agenticMessage(err))
 		return false, false
 	}
+	if agentic {
+		s.auditAgentic(w, r)
+	}
+	return agentic, true
 }
 
 func (s *server) handleMessages(w http.ResponseWriter, r *http.Request) {

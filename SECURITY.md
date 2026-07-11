@@ -113,6 +113,15 @@ the interesting deployments are the ones that relax them.
 - **Tamper-proof auditing.** Agentic requests are logged, but the correlation
   id echoes a caller-suppliable header and there is no append-only audit
   store.
+- **Discovery, if you enable A2A.** `RELAY_A2A_ENABLED=true` publishes an
+  **unauthenticated** Agent Card at `/.well-known/agent-card.json` — that is
+  what a card is for: a peer reads it before it holds any credential. The card
+  names the models you serve and states whether this host can run an agent, so
+  it tells an unauthenticated scanner that a Claude subscription and possibly a
+  code-executing agent live here. The `/a2a` endpoint itself is authenticated
+  and rate-limited like every other inference endpoint. A2A is off by default
+  for exactly this reason; turn it on deliberately, and keep it behind the same
+  reverse proxy and private network as the rest.
 
 ## Why a reverse proxy is not optional off loopback
 

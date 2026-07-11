@@ -92,7 +92,8 @@ buildGoModule {
   pname = "agent-relay";
   version = "0.1.0";
   src = ./.;
-  vendorHash = null; # stdlib only, no dependencies
+  # The A2A adapter pulls in the official a2a-go SDK; everything else is stdlib.
+  vendorHash = "sha256-...";  # nix will tell you the right hash on first build
 }
 ```
 

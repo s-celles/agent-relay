@@ -22,6 +22,10 @@ import (
 	_ "github.com/s-celles/agent-relay/internal/backend/ollama" // register the ollama backend
 )
 
+// version is what the relay reports about itself — today only on the A2A Agent
+// Card, where a peer expects an agent to state its version.
+const version = "0.8.0"
+
 func main() {
 	if err := run(); err != nil {
 		slog.Error("fatal", "err", err)
@@ -61,7 +65,8 @@ func run() error {
 		routes[model] = b
 	}
 
-	handler, err := server.NewRouted(cfg, backend, routes, server.WithLogger(logger))
+	handler, err := server.NewRouted(cfg, backend, routes,
+		server.WithLogger(logger), server.WithVersion(version))
 	if err != nil {
 		return err
 	}

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -37,7 +38,20 @@ type Config struct {
 	// RateLimitRPM bounds sustained requests per minute per caller (0 = off).
 	// The concurrency cap bounds simultaneous work; this bounds spend.
 	RateLimitRPM int
-	LogLevel     string
+	// A2A exposes the Agent2Agent adapter: a JSON-RPC endpoint at /a2a and a
+	// deliberately public Agent Card. Off by default — it is extra surface, and
+	// the card advertises the models served and whether the relay can run an
+	// agent on its host.
+	A2A bool
+	// A2AModel serves A2A messages that name no model: A2A is an agent
+	// protocol and has no model field (peers may still set metadata.model).
+	A2AModel string
+	// PublicURL is the origin peers reach this relay on. It is what the Agent
+	// Card advertises and what artifact URLs are built from, so it must be the
+	// address a peer can actually resolve — not the bind address, when a
+	// reverse proxy or Tailscale sits in front.
+	PublicURL string
+	LogLevel  string
 }
 
 // FromEnv builds a Config from environment variables. getenv is injectable
@@ -75,6 +89,10 @@ func FromEnv(getenv func(string) string) (Config, error) {
 		return Config{}, fmt.Errorf("RELAY_RATE_LIMIT_RPM: %w", err)
 	}
 	cfg.OutputsDir = get("RELAY_OUTPUTS_DIR", filepath.Join(os.TempDir(), "agent-relay-outputs"))
+
+	cfg.A2A = getenv("RELAY_A2A_ENABLED") == "true"
+	cfg.A2AModel = get("RELAY_A2A_MODEL", "sonnet")
+	cfg.PublicURL = strings.TrimSuffix(get("RELAY_PUBLIC_URL", "http://"+cfg.BindAddr), "/")
 
 	cfg.Agentic = core.AgenticConfig{
 		Enabled:         getenv("RELAY_AGENTIC_ENABLED") == "true",
@@ -129,6 +147,13 @@ func (c Config) Validate() error {
 	if c.Agentic.Enabled && c.Agentic.PerRequestAuthz && len(c.AgenticTokens) == 0 {
 		return errors.New("per-request agentic authz requires RELAY_AGENTIC_TOKENS (REQ-EXEC-06)")
 	}
+	// An A2A peer reads the Agent Card and fetches artifacts by URL. If the
+	// relay is reachable off-host but still advertises its loopback address,
+	// every peer gets a card it cannot use and artifacts it cannot fetch —
+	// fail at startup rather than in the field.
+	if c.A2A && !isLoopback(c.BindAddr) && isLoopbackURL(c.PublicURL) {
+		return errors.New("A2A on a non-loopback bind requires RELAY_PUBLIC_URL: peers cannot reach the advertised loopback address")
+	}
 	if c.Backend == "" {
 		return errors.New("no backend configured")
 	}
@@ -143,6 +168,21 @@ func (c Config) Validate() error {
 		}
 	}
 	return nil
+}
+
+// isLoopbackURL reports whether a public URL points back at this host, i.e.
+// whether it is useless to a peer.
+func isLoopbackURL(raw string) bool {
+	u, err := url.Parse(raw)
+	if err != nil {
+		return false
+	}
+	host := u.Hostname()
+	if host == "localhost" {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
 }
 
 func isLoopback(addr string) bool {
