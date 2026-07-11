@@ -297,15 +297,13 @@ func (b *Backend) Infer(ctx context.Context, req core.InferRequest, sink core.Ev
 	scanner.Buffer(make([]byte, 0, 1<<20), 8<<20)
 	var errorDelivered bool
 	for scanner.Scan() {
-		ev, ok := parseStreamJSONLine(scanner.Bytes())
-		if !ok {
-			continue
-		}
-		if ev.Kind == core.EventError {
-			errorDelivered = true
-		}
-		if err := sink.Emit(ctx, ev); err != nil {
-			return err // client gone; deferred cancel+wait reaps the process
+		for _, ev := range parseStreamJSONLine(scanner.Bytes()) {
+			if ev.Kind == core.EventError {
+				errorDelivered = true
+			}
+			if err := sink.Emit(ctx, ev); err != nil {
+				return err // client gone; deferred cancel+wait reaps the process
+			}
 		}
 	}
 	if err := scanner.Err(); err != nil {

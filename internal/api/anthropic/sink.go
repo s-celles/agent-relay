@@ -19,7 +19,11 @@ type usageJSON struct {
 // every event (REQ-API-02). Content blocks (text and tool_use) are opened
 // lazily and indexed in order.
 type StreamSink struct {
-	w          http.ResponseWriter
+	w http.ResponseWriter
+	// Traces surfaces the backend agent's own tool activity as custom SSE
+	// events (X-Agent-Traces). Off by default: unknown event types can trip
+	// strict clients.
+	Traces     bool
 	id         string
 	model      string
 	started    bool
@@ -75,6 +79,31 @@ func (s *StreamSink) Emit(ctx context.Context, ev core.Event) error {
 			s.usage = *ev.Usage
 		}
 		return s.stop(ev.StopReason)
+	case core.EventAgentToolUse:
+		if !s.Traces {
+			return nil
+		}
+		if err := s.start(); err != nil {
+			return err
+		}
+		input := json.RawMessage(ev.ToolInput)
+		if !json.Valid(input) {
+			input = json.RawMessage("{}")
+		}
+		return s.event("agent_tool_use", map[string]any{
+			"type": "agent_tool_use", "id": ev.ToolID, "name": ev.ToolName, "input": input,
+		})
+	case core.EventAgentToolResult:
+		if !s.Traces {
+			return nil
+		}
+		if err := s.start(); err != nil {
+			return err
+		}
+		return s.event("agent_tool_result", map[string]any{
+			"type": "agent_tool_result", "tool_use_id": ev.ToolID,
+			"content": ev.Text, "is_error": ev.IsError,
+		})
 	case core.EventError:
 		if err := s.start(); err != nil {
 			return err

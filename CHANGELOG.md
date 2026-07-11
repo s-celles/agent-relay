@@ -9,6 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Agent tool traces: the backend agent's own tool calls and results (parsed
+  from the CLI's `assistant`/`user` stream-json lines, previously dropped)
+  are surfaced two ways — opt-in SSE events on `/v1/messages`
+  (`X-Agent-Traces: true` → `agent_tool_use` / `agent_tool_result`; off by
+  default so strict SDK stream parsers are unaffected, and they consume no
+  content-block indices), and a `trace.jsonl` written into retained output
+  directories (`X-Agentic-Keep-Outputs`), created only if the agent actually
+  used tools.
 - Per-request cost and usage accounting: the backend-reported dollar cost
   (the claude CLI's `total_cost_usd`) and token counts are now surfaced —
   each served request logs a `request usage` line (`input_tokens`,

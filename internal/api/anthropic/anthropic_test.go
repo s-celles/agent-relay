@@ -380,6 +380,54 @@ func TestStreamSinkToolUse(t *testing.T) {
 	}
 }
 
+var tracePath = []core.Event{
+	{Kind: core.EventMessageStart},
+	{Kind: core.EventAgentToolUse, ToolID: "toolu_1", ToolName: "Write", ToolInput: []byte(`{"file_path":"/tmp/x"}`)},
+	{Kind: core.EventAgentToolResult, ToolID: "toolu_1", Text: "File created"},
+	{Kind: core.EventTextDelta, Text: "Done."},
+	{Kind: core.EventMessageStop},
+}
+
+func TestStreamSinkTracesOptIn(t *testing.T) {
+	rec := httptest.NewRecorder()
+	sink := NewStreamSink(rec, "msg_test", "sonnet")
+	sink.Traces = true
+	emitAll(t, sink, tracePath)
+
+	body := rec.Body.String()
+	for _, want := range []string{
+		"event: agent_tool_use",
+		`"name":"Write"`,
+		`"id":"toolu_1"`,
+		"event: agent_tool_result",
+		`"content":"File created"`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("trace stream missing %q:\n%s", want, body)
+		}
+	}
+	// Traces must not disturb the standard block indexing: the text block is
+	// still index 0.
+	if !strings.Contains(body, `"index":0`) || strings.Contains(body, `"index":1`) {
+		t.Errorf("trace events must not consume content block indices:\n%s", body)
+	}
+}
+
+func TestStreamSinkTracesOffByDefault(t *testing.T) {
+	// Unknown SSE event types can trip strict SDKs, so traces are opt-in.
+	rec := httptest.NewRecorder()
+	sink := NewStreamSink(rec, "msg_test", "sonnet")
+	emitAll(t, sink, tracePath)
+
+	body := rec.Body.String()
+	if strings.Contains(body, "agent_tool") {
+		t.Errorf("no trace events expected by default:\n%s", body)
+	}
+	if !strings.Contains(body, `"text":"Done."`) {
+		t.Errorf("normal content still expected:\n%s", body)
+	}
+}
+
 func TestStreamSinkError(t *testing.T) {
 	rec := httptest.NewRecorder()
 	sink := NewStreamSink(rec, "msg_test", "sonnet")

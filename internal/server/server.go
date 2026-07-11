@@ -36,12 +36,14 @@ type startedSink interface {
 type usageSink struct {
 	core.EventSink
 	usage core.Usage
+	trace *traceWriter // nil unless outputs are retained
 }
 
 func (u *usageSink) Emit(ctx context.Context, ev core.Event) error {
 	if ev.Kind == core.EventMessageStop && ev.Usage != nil {
 		u.usage = *ev.Usage
 	}
+	u.trace.record(ev)
 	return u.EventSink.Emit(ctx, ev)
 }
 
@@ -52,6 +54,81 @@ type usageStreamSink struct {
 }
 
 func (u *usageStreamSink) Started() bool { return u.inner.Started() }
+
+// traceWriter appends the backend agent's tool activity to trace.jsonl in
+// the request's retained output directory, so a harness can review what the
+// agent actually did. Failures are logged, never fatal to the request.
+type traceWriter struct {
+	dir    string
+	f      *os.File // opened lazily: no tool activity, no trace file
+	logger *slog.Logger
+}
+
+func newTraceWriter(dir string, logger *slog.Logger) *traceWriter {
+	return &traceWriter{dir: dir, logger: logger}
+}
+
+// file opens trace.jsonl on first use, so a run that called no tools leaves
+// no empty file behind.
+func (t *traceWriter) file() *os.File {
+	if t.f == nil {
+		f, err := os.OpenFile(filepath.Join(t.dir, "trace.jsonl"),
+			os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
+		if err != nil {
+			t.logger.Error("open trace file", "err", err)
+			return nil
+		}
+		t.f = f
+	}
+	return t.f
+}
+
+func (t *traceWriter) record(ev core.Event) {
+	if t == nil {
+		return
+	}
+	var rec map[string]any
+	switch ev.Kind {
+	case core.EventAgentToolUse:
+		input := json.RawMessage(ev.ToolInput)
+		if !json.Valid(input) {
+			input = json.RawMessage("{}")
+		}
+		rec = map[string]any{"type": "tool_use", "id": ev.ToolID, "name": ev.ToolName, "input": input}
+	case core.EventAgentToolResult:
+		rec = map[string]any{"type": "tool_result", "tool_use_id": ev.ToolID,
+			"content": ev.Text, "is_error": ev.IsError}
+	default:
+		return
+	}
+	line, err := json.Marshal(rec)
+	if err != nil {
+		return
+	}
+	f := t.file()
+	if f == nil {
+		return
+	}
+	if _, err := f.Write(append(line, '\n')); err != nil {
+		t.logger.Error("write trace", "err", err)
+	}
+}
+
+func (t *traceWriter) Close() {
+	if t != nil && t.f != nil {
+		t.f.Close()
+	}
+}
+
+// traceFor opens a trace writer when the request's outputs are retained;
+// otherwise there is nowhere durable to write, and traces reach the client
+// only via the opt-in SSE events.
+func (s *server) traceFor(req core.InferRequest) *traceWriter {
+	if req.OutputDir == "" {
+		return nil
+	}
+	return newTraceWriter(req.OutputDir, s.logger)
+}
 
 // accountUsage logs the request's usage and cost, correlated by request id,
 // and feeds the cumulative metrics.
@@ -329,9 +406,12 @@ func (s *server) handleMessages(w http.ResponseWriter, r *http.Request) {
 	if !s.prepareOutputs(w, r, &req, agentic, anthropic.WriteError) {
 		return
 	}
+	req.Traces = r.Header.Get("X-Agent-Traces") == "true"
 	id := "msg_" + obs.NewRequestID()
 	if req.Stream {
-		s.run(w, r, req, anthropic.NewStreamSink(w, id, req.Model), anthropic.WriteError)
+		sink := anthropic.NewStreamSink(w, id, req.Model)
+		sink.Traces = req.Traces // custom SSE events; opt-in
+		s.run(w, r, req, sink, anthropic.WriteError)
 		return
 	}
 	sink := anthropic.NewCollectSink(id, req.Model)
@@ -380,7 +460,10 @@ func (s *server) run(w http.ResponseWriter, r *http.Request, req core.InferReque
 	s.metrics.RequestStarted()
 	defer s.metrics.RequestFinished()
 
-	observed := &usageStreamSink{usageSink: usageSink{EventSink: sink}, inner: sink}
+	trace := s.traceFor(req)
+	defer trace.Close()
+
+	observed := &usageStreamSink{usageSink: usageSink{EventSink: sink, trace: trace}, inner: sink}
 	err := s.dispatcher.Do(r.Context(), req, observed)
 	s.accountUsage(w, r, observed.usage)
 	if err == nil {
@@ -395,7 +478,10 @@ func (s *server) runCollected(w http.ResponseWriter, r *http.Request, req core.I
 	s.metrics.RequestStarted()
 	defer s.metrics.RequestFinished()
 
-	observed := &usageSink{EventSink: sink}
+	trace := s.traceFor(req)
+	defer trace.Close()
+
+	observed := &usageSink{EventSink: sink, trace: trace}
 	err := s.dispatcher.Do(r.Context(), req, observed)
 	s.accountUsage(w, r, observed.usage)
 	if err != nil {

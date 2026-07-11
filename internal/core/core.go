@@ -91,6 +91,10 @@ type InferRequest struct {
 	// IncludeUsage asks a streaming response to carry token usage
 	// (OpenAI's stream_options.include_usage; always on in the Anthropic wire).
 	IncludeUsage bool
+	// Traces asks for the backend agent's own tool activity to be surfaced
+	// (X-Agent-Traces). Off by default: unknown SSE event types can trip
+	// strict clients.
+	Traces bool
 	// Agentic marks a request authorized for host-side agentic execution
 	// (REQ-EXEC-06). Only the server sets it, after per-request
 	// authorization; backends refuse it unless configured for agentic mode.
@@ -111,6 +115,11 @@ const (
 	EventToolUseStart // the model starts calling a client-defined tool
 	EventToolUseDelta // partial JSON of the tool input
 	EventToolUseStop
+	// Trace events: the backend's *own* agent loop used one of its tools
+	// (agentic mode). Informational — they are not part of the model's reply
+	// to the caller, and are only surfaced when the client opts in.
+	EventAgentToolUse
+	EventAgentToolResult
 )
 
 type Usage struct {
@@ -125,11 +134,15 @@ type Event struct {
 	Text string // EventTextDelta; EventToolUseDelta: partial input JSON
 	// Usage is set on EventMessageStart (input tokens, as the wire formats
 	// report them up front) and on EventMessageStop (final counts).
-	Usage      *Usage
-	Err        error  // EventError
-	ToolID     string // EventToolUseStart
-	ToolName   string // EventToolUseStart
-	StopReason string // EventMessageStop; "" means default ("end_turn"/"tool_use")
+	Usage     *Usage
+	Err       error           // EventError
+	ToolID    string          // EventToolUseStart / EventAgentTool*
+	ToolName  string          // EventToolUseStart / EventAgentToolUse
+	ToolInput json.RawMessage // EventAgentToolUse
+	IsError   bool            // EventAgentToolResult
+	// StopReason is set on EventMessageStop; "" means the default
+	// ("end_turn", or "tool_use" when the turn produced tool calls).
+	StopReason string
 }
 
 // EventSink renders neutral events to the client wire format and flushes.

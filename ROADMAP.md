@@ -68,12 +68,11 @@ agent" into an *observable, resumable agent-execution service* — the
 substrate a harness needs. Grounded in what the CLI's `stream-json` already
 emits and the relay currently drops.
 
-- [ ] **Tool-activity traces.** The CLI emits `assistant` lines carrying
-  `tool_use` blocks and `user` lines carrying `tool_result`; the parser
-  ignores them, so an agentic run is a black box. Re-emit them under custom
-  SSE event names (`agent_tool_use`, `agent_tool_result`) — standard clients
-  ignore unknown event types, so nothing breaks — and/or persist a
-  `trace.jsonl` alongside retained outputs.
+- [x] **Tool-activity traces.** The CLI's own tool calls and results are
+  parsed from its `assistant`/`user` lines and surfaced two ways: opt-in SSE
+  events (`X-Agent-Traces: true` → `agent_tool_use` / `agent_tool_result`,
+  off by default so strict SDKs are unaffected) and a `trace.jsonl` written
+  into retained output directories.
 - [ ] **Session continuity (`--resume`).** Every stream-json line carries a
   `session_id` that the relay discards. Expose it (`X-Session-Id` response
   header), accept it back on a later request, and pass `--resume` to the CLI:

@@ -148,6 +148,36 @@ flags, each in its own ephemeral working directory. See
 [execution-modes.md](execution-modes.md) for the full inference-vs-agentic
 comparison.
 
+### Agent tool traces
+
+An agentic run is otherwise a black box: the client sees text, never what the
+agent *did*. Two ways to observe it:
+
+**Live, on the stream** — send `X-Agent-Traces: true` on a streaming
+`/v1/messages` request. The relay then emits two extra SSE event types
+alongside the standard ones:
+
+```
+event: agent_tool_use
+data: {"type":"agent_tool_use","id":"toolu_…","name":"Write","input":{…}}
+
+event: agent_tool_result
+data: {"type":"agent_tool_result","tool_use_id":"toolu_…","content":"File created…","is_error":false}
+```
+
+Traces are **opt-in** because unknown SSE event types can trip strict SDK
+stream parsers; without the header the stream is byte-for-byte the standard
+one. They carry no content-block indices, so they never disturb the normal
+`content_block_*` sequence. Tool results are truncated to 4 KiB.
+
+**Durably, as a file** — any request whose outputs are retained
+(`X-Agentic-Keep-Outputs`) also gets a `trace.jsonl` in its output directory,
+one JSON object per tool call and result, retrievable through the endpoints
+below. No header needed, and no file is created if the agent used no tools.
+
+Traces are available on `/v1/messages`; the OpenAI wire has no event-name
+channel, so use the `trace.jsonl` route there.
+
 ### Retrieving agentic outputs
 
 By default an agentic request's working directory is deleted when the

@@ -26,6 +26,7 @@ type fakeBackend struct {
 	maxTokens   bool
 	sampling    bool
 	costUSD     float64
+	emitTrace   bool
 }
 
 func (f *fakeBackend) Name() string { return "fake" }
@@ -50,13 +51,20 @@ func (f *fakeBackend) Infer(ctx context.Context, req core.InferRequest, sink cor
 		<-ctx.Done()
 		return ctx.Err()
 	}
-	for _, ev := range []core.Event{
-		{Kind: core.EventMessageStart},
-		{Kind: core.EventTextDelta, Text: "Hello"},
-		{Kind: core.EventMessageStop, Usage: &core.Usage{
+	events := []core.Event{{Kind: core.EventMessageStart}}
+	if f.emitTrace {
+		events = append(events,
+			core.Event{Kind: core.EventAgentToolUse, ToolID: "t1", ToolName: "Write", ToolInput: []byte(`{"file_path":"/x"}`)},
+			core.Event{Kind: core.EventAgentToolResult, ToolID: "t1", Text: "created"},
+		)
+	}
+	events = append(events,
+		core.Event{Kind: core.EventTextDelta, Text: "Hello"},
+		core.Event{Kind: core.EventMessageStop, Usage: &core.Usage{
 			InputTokens: 3, OutputTokens: 5, CostUSD: f.costUSD,
 		}},
-	} {
+	)
+	for _, ev := range events {
 		if err := sink.Emit(ctx, ev); err != nil {
 			return err
 		}
@@ -563,6 +571,52 @@ func TestMaxTokensWarningLoggedOncePerProcess(t *testing.T) {
 	}
 	if n := strings.Count(buf.String(), "not enforced"); n != 1 {
 		t.Fatalf("max_tokens warning logged %d times across two requests, want exactly 1; log:\n%s", n, buf.String())
+	}
+}
+
+func TestTraceFileWrittenToRetainedOutputs(t *testing.T) {
+	// Agent tool activity is persisted as trace.jsonl alongside retained
+	// outputs, so a harness can review what the agent actually did.
+	fb := &fakeBackend{emitTrace: true}
+	h := newTestServer(t, fb, agenticPerRequest, withOutputsDir(t))
+
+	rec := postMessages(t, h, map[string]string{
+		"X-Agentic-Authorization": "Bearer agentic-secret",
+		"X-Agentic-Keep-Outputs":  "true",
+	})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body: %s", rec.Code, rec.Body.String())
+	}
+	id := rec.Header().Get("X-Agentic-Outputs")
+
+	req := httptest.NewRequest("GET", "/v1/outputs/"+id+"/files/trace.jsonl", nil)
+	req.Header.Set("x-api-key", "good-token")
+	drec := httptest.NewRecorder()
+	h.ServeHTTP(drec, req)
+	if drec.Code != http.StatusOK {
+		t.Fatalf("trace.jsonl download = %d", drec.Code)
+	}
+	lines := strings.Split(strings.TrimSpace(drec.Body.String()), "\n")
+	if len(lines) != 2 {
+		t.Fatalf("trace lines = %d, want 2:\n%s", len(lines), drec.Body.String())
+	}
+	var first map[string]any
+	if err := json.Unmarshal([]byte(lines[0]), &first); err != nil {
+		t.Fatalf("trace line is not JSON: %v", err)
+	}
+	if first["type"] != "tool_use" || first["name"] != "Write" {
+		t.Errorf("first trace line = %v", first)
+	}
+}
+
+func TestNoTraceFileWithoutRetainedOutputs(t *testing.T) {
+	h := newTestServer(t, &fakeBackend{emitTrace: true}, agenticPerRequest, withOutputsDir(t))
+	rec := postMessages(t, h, map[string]string{"X-Agentic-Authorization": "Bearer agentic-secret"})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d", rec.Code)
+	}
+	if rec.Header().Get("X-Agentic-Outputs") != "" {
+		t.Fatal("no outputs id expected without X-Agentic-Keep-Outputs")
 	}
 }
 

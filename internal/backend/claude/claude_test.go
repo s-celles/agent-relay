@@ -624,19 +624,56 @@ func TestRegisteredInCore(t *testing.T) {
 	}
 }
 
+func TestParseAgentToolActivity(t *testing.T) {
+	// The CLI's own agent loop reports its tool calls on `assistant` lines
+	// and their outcomes on `user` lines; forward them as trace events.
+	assistant := `{"type":"assistant","message":{"content":[
+		{"type":"text","text":"I'll write the file."},
+		{"type":"tool_use","id":"toolu_1","name":"Write","input":{"file_path":"/tmp/x","content":"hi"}}
+	]}}`
+	evs := parseStreamJSONLine([]byte(assistant))
+	if len(evs) != 1 {
+		t.Fatalf("got %d events, want 1 (text blocks must not be re-emitted)", len(evs))
+	}
+	ev := evs[0]
+	if ev.Kind != core.EventAgentToolUse || ev.ToolName != "Write" || ev.ToolID != "toolu_1" {
+		t.Fatalf("ev = %+v", ev)
+	}
+	if !strings.Contains(string(ev.ToolInput), "/tmp/x") {
+		t.Errorf("tool input lost: %s", ev.ToolInput)
+	}
+
+	user := `{"type":"user","message":{"content":[
+		{"type":"tool_result","tool_use_id":"toolu_1","content":"File created","is_error":false}
+	]}}`
+	evs = parseStreamJSONLine([]byte(user))
+	if len(evs) != 1 || evs[0].Kind != core.EventAgentToolResult {
+		t.Fatalf("evs = %+v", evs)
+	}
+	if evs[0].ToolID != "toolu_1" || !strings.Contains(evs[0].Text, "File created") {
+		t.Errorf("ev = %+v", evs[0])
+	}
+
+	// A text-only assistant line stays ignored: its text already reached the
+	// client as content_block_delta events.
+	if evs := parseStreamJSONLine([]byte(`{"type":"assistant","message":{"content":[{"type":"text","text":"dup"}]}}`)); len(evs) != 0 {
+		t.Fatalf("text-only assistant line must be ignored, got %+v", evs)
+	}
+}
+
 func TestParseResultCarriesCost(t *testing.T) {
 	// The CLI reports the real dollar cost of the turn; forward it so the
 	// relay can attribute spend per request.
 	line := `{"type":"result","subtype":"success","total_cost_usd":0.0228547,"usage":{"input_tokens":10,"output_tokens":20}}`
-	ev, ok := parseStreamJSONLine([]byte(line))
-	if !ok || ev.Kind != core.EventMessageStop {
-		t.Fatalf("ev = %+v, ok = %v", ev, ok)
+	evs := parseStreamJSONLine([]byte(line))
+	if len(evs) != 1 || evs[0].Kind != core.EventMessageStop {
+		t.Fatalf("evs = %+v", evs)
 	}
-	if ev.Usage == nil {
+	if evs[0].Usage == nil {
 		t.Fatal("usage missing")
 	}
-	if ev.Usage.CostUSD != 0.0228547 {
-		t.Errorf("CostUSD = %v, want 0.0228547", ev.Usage.CostUSD)
+	if evs[0].Usage.CostUSD != 0.0228547 {
+		t.Errorf("CostUSD = %v, want 0.0228547", evs[0].Usage.CostUSD)
 	}
 }
 
@@ -653,19 +690,19 @@ func TestParseStreamJSONLine(t *testing.T) {
 		{"result with cost", `{"type":"result","subtype":"success","total_cost_usd":0.0228,"usage":{"input_tokens":1,"output_tokens":2}}`, true, core.EventMessageStop},
 		{"error result", `{"type":"result","subtype":"error_max_turns","is_error":true,"result":"limit"}`, true, core.EventError},
 		{"init line ignored", `{"type":"system","subtype":"init"}`, false, 0},
-		{"assistant line ignored", `{"type":"assistant","message":{"content":[{"type":"text","text":"dup"}]}}`, false, 0},
+		{"text-only assistant line ignored", `{"type":"assistant","message":{"content":[{"type":"text","text":"dup"}]}}`, false, 0},
 		{"non-text delta ignored", `{"type":"stream_event","event":{"type":"content_block_delta","delta":{"type":"input_json_delta","partial_json":"{"}}}`, false, 0},
 		{"garbage ignored", `not json at all`, false, 0},
 		{"unknown type ignored", `{"type":"telemetry_v9"}`, false, 0},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			ev, ok := parseStreamJSONLine([]byte(tc.line))
-			if ok != tc.wantOK {
-				t.Fatalf("ok = %v, want %v (DQ-1: parse defensively)", ok, tc.wantOK)
+			evs := parseStreamJSONLine([]byte(tc.line))
+			if (len(evs) > 0) != tc.wantOK {
+				t.Fatalf("got %d events, wantOK = %v (DQ-1: parse defensively)", len(evs), tc.wantOK)
 			}
-			if ok && ev.Kind != tc.want {
-				t.Fatalf("kind = %v, want %v", ev.Kind, tc.want)
+			if tc.wantOK && evs[0].Kind != tc.want {
+				t.Fatalf("kind = %v, want %v", evs[0].Kind, tc.want)
 			}
 		})
 	}
