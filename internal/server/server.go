@@ -23,6 +23,7 @@ import (
 	"github.com/s-celles/agent-relay/internal/core"
 	"github.com/s-celles/agent-relay/internal/obs"
 	"github.com/s-celles/agent-relay/internal/outputs"
+	"github.com/s-celles/agent-relay/internal/ratelimit"
 )
 
 type startedSink interface {
@@ -224,15 +225,21 @@ func New(cfg config.Config, backend core.Backend, opts ...Option) (http.Handler,
 		o(s)
 	}
 
+	limiter := ratelimit.New(cfg.RateLimitRPM)
 	auth := func(next http.Handler) http.Handler {
 		return RequireBearer(cfg.Tokens, s.metrics.Unauthorized, anthropic.WriteError, next)
 	}
+	// Inference endpoints are what spend the subscription, so they carry the
+	// quota; /health and /v1/metrics do not.
+	throttledAuth := func(next http.Handler, writeErr func(http.ResponseWriter, int, string)) http.Handler {
+		return auth(RateLimit(limiter, s.metrics.RateLimited, writeErr, next))
+	}
 
 	mux := http.NewServeMux()
-	mux.Handle("POST /v1/messages", auth(http.HandlerFunc(s.handleMessages)))     // REQ-API-01
-	mux.Handle("POST /v1/chat/completions", auth(http.HandlerFunc(s.handleChat))) // REQ-API-03
-	mux.Handle("GET /health", http.HandlerFunc(s.handleHealth))                   // REQ-API-04
-	mux.Handle("GET /v1/metrics", auth(s.metrics.Handler()))                      // REQ-API-06
+	mux.Handle("POST /v1/messages", throttledAuth(http.HandlerFunc(s.handleMessages), anthropic.WriteError))  // REQ-API-01
+	mux.Handle("POST /v1/chat/completions", throttledAuth(http.HandlerFunc(s.handleChat), openai.WriteError)) // REQ-API-03
+	mux.Handle("GET /health", http.HandlerFunc(s.handleHealth))                                               // REQ-API-04
+	mux.Handle("GET /v1/metrics", auth(s.metrics.Handler()))                                                  // REQ-API-06
 	mux.Handle("GET /v1/outputs/{id}", auth(http.HandlerFunc(s.handleOutputsList)))
 	mux.Handle("GET /v1/outputs/{id}/files/{path...}", auth(http.HandlerFunc(s.handleOutputsDownload)))
 	mux.Handle("DELETE /v1/outputs/{id}", auth(http.HandlerFunc(s.handleOutputsDelete)))
@@ -567,6 +574,9 @@ func (s *server) reportDispatchError(w http.ResponseWriter, r *http.Request, err
 	switch {
 	case errors.Is(err, core.ErrBusy):
 		s.metrics.RejectedBusy()
+		// A busy pool clears as running requests finish; tell the client to
+		// come back rather than leaving it to guess.
+		setRetryAfter(w, time.Second)
 		writeErr(w, http.StatusServiceUnavailable, "all backend slots busy, retry later")
 	case streamStarted:
 		s.metrics.BackendError()

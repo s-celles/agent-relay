@@ -31,6 +31,7 @@ type Metrics struct {
 	rejectedBusy  atomic.Int64
 	unauthorized  atomic.Int64
 	agenticDenied atomic.Int64
+	rateLimited   atomic.Int64
 	backendErrors atomic.Int64
 	inputTokens   atomic.Int64
 	outputTokens  atomic.Int64
@@ -46,6 +47,7 @@ func (m *Metrics) RequestFinished() { m.inFlight.Add(-1) }
 func (m *Metrics) RejectedBusy()    { m.rejectedBusy.Add(1) }
 func (m *Metrics) Unauthorized()    { m.unauthorized.Add(1) }
 func (m *Metrics) AgenticDenied()   { m.agenticDenied.Add(1) }
+func (m *Metrics) RateLimited()     { m.rateLimited.Add(1) }
 func (m *Metrics) BackendError()    { m.backendErrors.Add(1) }
 
 // RecordUsage accumulates the token counts and dollar cost of one served
@@ -67,6 +69,7 @@ func (m *Metrics) Handler() http.Handler {
 			"rejected_busy":  m.rejectedBusy.Load(),
 			"unauthorized":   m.unauthorized.Load(),
 			"agentic_denied": m.agenticDenied.Load(),
+			"rate_limited":   m.rateLimited.Load(),
 			"backend_errors": m.backendErrors.Load(),
 
 			"input_tokens_total":  m.inputTokens.Load(),

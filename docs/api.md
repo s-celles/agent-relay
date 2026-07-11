@@ -279,10 +279,19 @@ per request.
 
 | Status | Meaning |
 |---|---|
-| 400 | Malformed body, unsupported role or content block type. |
+| 400 | Malformed body, unsupported role or content block type, or an unsatisfiable header combination (e.g. resuming without a stable workspace). |
 | 401 | Missing or invalid credential. |
+| 403 | Agentic execution denied (disabled, or an invalid agentic credential). |
+| 404 | Unknown or expired outputs id. |
+| 429 | Per-caller rate limit exceeded. Carries `Retry-After`. No subprocess was spawned. |
 | 502 | Backend failed before producing a stream. |
-| 503 | All concurrency slots busy; retry later. No subprocess was spawned. |
+| 503 | All concurrency slots busy. Carries `Retry-After`. No subprocess was spawned. |
+
+Both 429 and 503 carry a `Retry-After` header (seconds), so a client fanning
+requests out can pace itself instead of hammering. The quota is off by
+default; set `RELAY_RATE_LIMIT_RPM` to bound sustained requests per minute
+per caller (the concurrency cap bounds *simultaneous* work; the quota bounds
+*spend*).
 
 Error bodies follow the wire format of the endpoint (Anthropic
 `{"type":"error","error":{...}}` shape on `/v1/messages`, OpenAI

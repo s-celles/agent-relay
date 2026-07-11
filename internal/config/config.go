@@ -31,7 +31,10 @@ type Config struct {
 	// (X-Agentic-Keep-Outputs): where they live and how long before sweep.
 	OutputsDir string
 	OutputsTTL time.Duration
-	LogLevel   string
+	// RateLimitRPM bounds sustained requests per minute per caller (0 = off).
+	// The concurrency cap bounds simultaneous work; this bounds spend.
+	RateLimitRPM int
+	LogLevel     string
 }
 
 // FromEnv builds a Config from environment variables. getenv is injectable
@@ -64,6 +67,9 @@ func FromEnv(getenv func(string) string) (Config, error) {
 	}
 	if cfg.OutputsTTL, err = time.ParseDuration(get("RELAY_OUTPUTS_TTL", "10m")); err != nil {
 		return Config{}, fmt.Errorf("RELAY_OUTPUTS_TTL: %w", err)
+	}
+	if cfg.RateLimitRPM, err = strconv.Atoi(get("RELAY_RATE_LIMIT_RPM", "0")); err != nil {
+		return Config{}, fmt.Errorf("RELAY_RATE_LIMIT_RPM: %w", err)
 	}
 	cfg.OutputsDir = get("RELAY_OUTPUTS_DIR", filepath.Join(os.TempDir(), "agent-relay-outputs"))
 

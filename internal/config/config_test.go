@@ -121,6 +121,9 @@ func TestFromEnvDefaults(t *testing.T) {
 	if cfg.OutputsDir == "" {
 		t.Error("OutputsDir must have a default")
 	}
+	if cfg.RateLimitRPM != 0 {
+		t.Errorf("RateLimitRPM = %d, want 0 (disabled) by default", cfg.RateLimitRPM)
+	}
 	if err := cfg.Validate(); err != nil {
 		t.Errorf("default config must validate: %v", err)
 	}
@@ -138,6 +141,7 @@ func TestFromEnvParsing(t *testing.T) {
 		"RELAY_AGENTIC_TOKENS":   "ag-a,ag-b",
 		"RELAY_OUTPUTS_TTL":      "30m",
 		"RELAY_OUTPUTS_DIR":      "/srv/relay-outputs",
+		"RELAY_RATE_LIMIT_RPM":   "120",
 	}
 	cfg, err := FromEnv(func(k string) string { return env[k] })
 	if err != nil {
@@ -176,6 +180,9 @@ func TestFromEnvParsing(t *testing.T) {
 	}
 	if cfg.OutputsDir != "/srv/relay-outputs" {
 		t.Errorf("OutputsDir = %q", cfg.OutputsDir)
+	}
+	if cfg.RateLimitRPM != 120 {
+		t.Errorf("RateLimitRPM = %d", cfg.RateLimitRPM)
 	}
 }
 

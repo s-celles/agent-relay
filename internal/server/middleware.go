@@ -1,9 +1,16 @@
 package server
 
 import (
+	"crypto/sha256"
 	"crypto/subtle"
+	"math"
+	"net"
 	"net/http"
+	"strconv"
 	"strings"
+	"time"
+
+	"github.com/s-celles/agent-relay/internal/ratelimit"
 )
 
 // RequireBearer rejects requests whose credential matches no configured
@@ -29,6 +36,54 @@ func RequireBearer(tokens [][]byte, onReject func(), writeErr func(http.Response
 		}
 		writeErr(w, http.StatusUnauthorized, "unauthorized")
 	})
+}
+
+// RateLimit throttles each caller independently, so one client cannot drain
+// the operator's subscription. It runs after authentication (a rejected
+// caller consumes no quota) and before dispatch (a throttled request spawns
+// nothing). Callers are keyed by credential; with no tokens configured — a
+// loopback-only posture — by remote address.
+func RateLimit(l *ratelimit.Limiter, onReject func(), writeErr func(http.ResponseWriter, int, string), next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		key := string(extractCredential(r))
+		if key == "" {
+			key = callerAddr(r)
+		}
+		ok, retryAfter := l.Allow(hashKey(key), time.Now())
+		if !ok {
+			if onReject != nil {
+				onReject()
+			}
+			setRetryAfter(w, retryAfter)
+			writeErr(w, http.StatusTooManyRequests, "rate limit exceeded, slow down")
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+// hashKey avoids keeping caller credentials as map keys in a second place.
+func hashKey(k string) string {
+	sum := sha256.Sum256([]byte(k))
+	return string(sum[:])
+}
+
+func callerAddr(r *http.Request) string {
+	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		return r.RemoteAddr
+	}
+	return host
+}
+
+// setRetryAfter tells the client when to come back (RFC 9110 §10.2.3),
+// rounded up to whole seconds with a one-second floor.
+func setRetryAfter(w http.ResponseWriter, d time.Duration) {
+	secs := int(math.Ceil(d.Seconds()))
+	if secs < 1 {
+		secs = 1
+	}
+	w.Header().Set("Retry-After", strconv.Itoa(secs))
 }
 
 // extractCredential accepts either `Authorization: Bearer <token>` or the

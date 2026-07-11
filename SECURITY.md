@@ -104,8 +104,12 @@ the interesting deployments are the ones that relax them.
   injected one; OS-level containment (boundary 3) is your only backstop.
 - **Token issuance, expiry, and rotation.** The relay compares tokens; it does
   not manage their lifecycle.
-- **Per-caller rate limiting.** `RELAY_MAX_CONCURRENT` is a global concurrency
-  cap, not a quota. Any valid-token caller can exhaust your subscription.
+- **Per-caller rate limiting — partially.** `RELAY_RATE_LIMIT_RPM` now bounds
+  sustained requests per minute per caller (429 + `Retry-After`), which caps
+  the rate at which one caller can spend your subscription. It is **off by
+  default**, it is a request-rate quota rather than a token/cost budget, and
+  it is in-process (no shared state across replicas). A reverse proxy remains
+  the place for edge-level throttling.
 - **Tamper-proof auditing.** Agentic requests are logged, but the correlation
   id echoes a caller-suppliable header and there is no append-only audit
   store.

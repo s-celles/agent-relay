@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Backpressure signals: 503 (pool busy) and the new 429 (quota exceeded)
+  both carry a `Retry-After` header, and `RELAY_RATE_LIMIT_RPM` enables a
+  per-caller token bucket (off by default; keyed by credential, or by remote
+  address in the loopback no-token posture). Throttled requests spawn
+  nothing and are counted in `/v1/metrics` as `rate_limited`.
 - Session continuity: responses carry the backend conversation id
   (`X-Session-Id`), and sending it back resumes that conversation
   (`--resume`) instead of replaying a flattened transcript. Because the CLI

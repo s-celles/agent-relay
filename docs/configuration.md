@@ -24,6 +24,7 @@ failure aborts startup — the relay never limps along on a half-read config.
 | `RELAY_AGENTIC_ARGS` | *(empty)* | Permission flags appended to the CLI when agentic mode is on. |
 | `RELAY_OUTPUTS_DIR` | *(system temp)* | Where retained agentic outputs (`X-Agentic-Keep-Outputs`) are stored. |
 | `RELAY_OUTPUTS_TTL` | `10m` | How long retained outputs survive before being swept. |
+| `RELAY_RATE_LIMIT_RPM` | `0` (off) | Sustained requests per minute allowed **per caller** (token bucket, burst = the same value). Exceeding it returns 429 with `Retry-After`. |
 
 The `RELAY_AGENTIC_*` variables switch the relay between its two execution
 modes; [execution-modes.md](execution-modes.md) explains what each mode can

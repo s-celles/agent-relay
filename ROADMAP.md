@@ -84,9 +84,11 @@ emits and the relay currently drops.
   a `request usage` line (tokens + `cost_usd`, correlated by `X-Request-Id`)
   and feeds `input_tokens_total` / `output_tokens_total` / `cost_usd_total`
   in `/v1/metrics`.
-- [ ] **Backpressure signals.** A full pool answers a bare 503; add
-  `Retry-After`, and a per-token quota (SECURITY.md lists per-caller rate
-  limiting as explicitly not defended).
+- [x] **Backpressure signals.** 503 (busy) and 429 (quota) both carry
+  `Retry-After`; `RELAY_RATE_LIMIT_RPM` adds a per-caller token bucket
+  (off by default), counted in `/v1/metrics` as `rate_limited`. Remaining
+  ideas: a token/cost budget rather than a request-rate quota, and shared
+  state across replicas.
 - [ ] **Per-request timeout override.** An `X-Request-Timeout` header capped
   by `RELAY_REQUEST_TIMEOUT`: a long agentic task and a short classification
   should not share one global deadline.

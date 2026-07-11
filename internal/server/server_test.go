@@ -246,6 +246,97 @@ func TestBusyReturns503(t *testing.T) {
 	<-firstDone
 }
 
+func TestBusyCarriesRetryAfter(t *testing.T) {
+	fb := &fakeBackend{block: true}
+	h := newTestServer(t, fb, func(c *config.Config) { c.MaxConcurrent = 1 })
+
+	started := make(chan struct{})
+	firstDone := make(chan struct{})
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go func() {
+		defer close(firstDone)
+		req := httptest.NewRequest("POST", "/v1/messages", strings.NewReader(messagesBody)).WithContext(ctx)
+		req.Header.Set("x-api-key", "good-token")
+		close(started)
+		h.ServeHTTP(httptest.NewRecorder(), req)
+	}()
+	<-started
+	deadline := time.Now().Add(2 * time.Second)
+	for fb.calls.Load() == 0 {
+		if time.Now().After(deadline) {
+			t.Fatal("first request never reached the backend")
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+
+	rec := postMessages(t, h, nil)
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d, want 503", rec.Code)
+	}
+	if rec.Header().Get("Retry-After") == "" {
+		t.Error("a 503 must tell the client when to retry (Retry-After)")
+	}
+
+	cancel()
+	<-firstDone
+}
+
+func TestPerCallerRateLimit(t *testing.T) {
+	fb := &fakeBackend{}
+	h := newTestServer(t, fb, func(c *config.Config) { c.RateLimitRPM = 2 })
+
+	for i := 0; i < 2; i++ {
+		if rec := postMessages(t, h, nil); rec.Code != http.StatusOK {
+			t.Fatalf("request %d: status = %d", i, rec.Code)
+		}
+	}
+	rec := postMessages(t, h, nil)
+	if rec.Code != http.StatusTooManyRequests {
+		t.Fatalf("status = %d, want 429", rec.Code)
+	}
+	if rec.Header().Get("Retry-After") == "" {
+		t.Error("a 429 must carry Retry-After")
+	}
+	if fb.calls.Load() != 2 {
+		t.Fatalf("backend calls = %d: a throttled request must not spawn", fb.calls.Load())
+	}
+
+	// The counter is visible in metrics.
+	req := httptest.NewRequest("GET", "/v1/metrics", nil)
+	req.Header.Set("x-api-key", "good-token")
+	mrec := httptest.NewRecorder()
+	h.ServeHTTP(mrec, req)
+	var m struct {
+		RateLimited int64 `json:"rate_limited"`
+	}
+	json.Unmarshal(mrec.Body.Bytes(), &m)
+	if m.RateLimited != 1 {
+		t.Errorf("rate_limited = %d, want 1", m.RateLimited)
+	}
+}
+
+func TestRateLimitIsPerCaller(t *testing.T) {
+	h := newTestServer(t, &fakeBackend{}, func(c *config.Config) {
+		c.RateLimitRPM = 1
+		c.Tokens = [][]byte{[]byte("good-token"), []byte("other-token")}
+	})
+	if rec := postMessages(t, h, nil); rec.Code != http.StatusOK {
+		t.Fatalf("first caller: %d", rec.Code)
+	}
+	if rec := postMessages(t, h, nil); rec.Code != http.StatusTooManyRequests {
+		t.Fatalf("first caller second request: %d, want 429", rec.Code)
+	}
+	// A different token has its own quota.
+	req := httptest.NewRequest("POST", "/v1/messages", strings.NewReader(messagesBody))
+	req.Header.Set("x-api-key", "other-token")
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("second caller: %d, want 200", rec.Code)
+	}
+}
+
 func TestMalformedBodyReturns400(t *testing.T) {
 	h := newTestServer(t, &fakeBackend{})
 	req := httptest.NewRequest("POST", "/v1/messages", strings.NewReader("{not json"))
