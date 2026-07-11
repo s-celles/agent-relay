@@ -57,6 +57,30 @@ behaves, and as other relays (LiteLLM, OpenRouter) do it.
   workload actually needs them.
 - **Keep working offline.** A local model answers with no network at all.
 
+## What this is not: a provider router
+
+Routing exists here to **compose the sources you already own** — a
+subscription reachable only through its CLI, and local compute you run
+yourself. It is not there to aggregate HTTP providers.
+
+If a service has an API and you hold a key for it (Mistral, Groq, OpenRouter,
+Together…), a backend here would add nothing: call the API directly, or put a
+real router in front. The relay already speaks `/v1/chat/completions`, so
+**LiteLLM (or any OpenAI-compatible router) can register agent-relay as one of
+its providers** — each tool doing its job:
+
+```
+your clients ──▶ LiteLLM (routing, retries, budgets, many providers)
+                    ├──▶ agent-relay  ← your Claude subscription, as an API
+                    ├──▶ Mistral / Groq / … (direct, they already have APIs)
+                    └──▶ …
+```
+
+What justifies this project is the other half — turning a subscription-bound
+*agent CLI* into a well-behaved API: the MCP tool bridge with process
+parking, agentic execution as a service, session continuity, and the security
+guarantees around a subprocess running as your user. None of that is routing.
+
 ## Adding another backend
 
 One package under `internal/backend/`, registering itself in an `init()`:
@@ -69,3 +93,9 @@ It implements three methods — `Name`, `Capabilities`, `Infer` — and the rest
 of the relay (auth, limiter, timeouts, both wire formats, traces, cost
 accounting, rate limiting) applies to it unchanged. That is the whole point
 of the neutral model (REQ-BK-03).
+
+But first, check it earns its place: **a backend is worth adding only when it
+brings a source of tokens you already own that has no other API** — a
+subscription behind a CLI, or a local runtime. Not to add a provider, and not
+to prove the architecture (Ollama did that, once). Every adapter is permanent
+surface: upstream drift, tests, docs, one more column in the table above.
