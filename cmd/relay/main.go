@@ -6,6 +6,7 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"os"
@@ -18,6 +19,7 @@ import (
 	"github.com/s-celles/agent-relay/internal/server"
 
 	_ "github.com/s-celles/agent-relay/internal/backend/claude" // register the claude backend
+	_ "github.com/s-celles/agent-relay/internal/backend/ollama" // register the ollama backend
 )
 
 func main() {
@@ -44,7 +46,22 @@ func run() error {
 		return err
 	}
 
-	handler, err := server.New(cfg, backend, server.WithLogger(logger))
+	// Model-name routing (DQ-2): the client keeps choosing a model, the relay
+	// decides which backend that means. Instantiate each routed backend once.
+	routes := map[string]core.Backend{}
+	instances := map[string]core.Backend{cfg.Backend: backend}
+	for model, name := range cfg.ModelRoutes {
+		b, ok := instances[name]
+		if !ok {
+			if b, err = core.New(name, cfg.Backends[name]); err != nil {
+				return fmt.Errorf("model route %q: %w", model, err)
+			}
+			instances[name] = b
+		}
+		routes[model] = b
+	}
+
+	handler, err := server.NewRouted(cfg, backend, routes, server.WithLogger(logger))
 	if err != nil {
 		return err
 	}

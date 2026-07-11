@@ -16,10 +16,13 @@ import (
 )
 
 type Config struct {
-	BindAddr       string   // default "127.0.0.1:18082" (REQ-NET-01)
-	Tokens         [][]byte // caller bearer tokens (REQ-AUTH-03)
-	Backend        string   // "claude"
-	Backends       map[string]core.BackendConfig
+	BindAddr string   // default "127.0.0.1:18082" (REQ-NET-01)
+	Tokens   [][]byte // caller bearer tokens (REQ-AUTH-03)
+	Backend  string   // the default backend
+	Backends map[string]core.BackendConfig
+	// ModelRoutes sends a logical model name to a specific backend
+	// (RELAY_MODEL_ROUTES); unrouted models go to Backend.
+	ModelRoutes    map[string]string
 	MaxConcurrent  int // default 10 (REQ-PROC-02)
 	RequestTimeout time.Duration
 	Agentic        core.AgenticConfig // disabled by default (REQ-EXEC-01)
@@ -86,6 +89,10 @@ func FromEnv(getenv func(string) string) (Config, error) {
 	if err != nil {
 		return Config{}, err
 	}
+	ollamaMap, err := parseModelMap(getenv("RELAY_OLLAMA_MODEL_MAP"))
+	if err != nil {
+		return Config{}, err
+	}
 	cfg.Backends = map[string]core.BackendConfig{
 		"claude": {
 			CLIPath:  get("RELAY_CLAUDE_CLI", "claude"),
@@ -94,6 +101,14 @@ func FromEnv(getenv func(string) string) (Config, error) {
 			EnvDeny:  splitCSV(getenv("RELAY_ENV_DENY")),
 			Agentic:  cfg.Agentic,
 		},
+		"ollama": {
+			BaseURL:  get("RELAY_OLLAMA_URL", "http://127.0.0.1:11434"),
+			ModelMap: ollamaMap,
+		},
+	}
+
+	if cfg.ModelRoutes, err = parseModelMap(getenv("RELAY_MODEL_ROUTES")); err != nil {
+		return Config{}, fmt.Errorf("RELAY_MODEL_ROUTES: %w", err)
 	}
 	return cfg, nil
 }
@@ -119,6 +134,13 @@ func (c Config) Validate() error {
 	}
 	if c.MaxConcurrent < 1 {
 		return errors.New("max concurrent requests must be >= 1 (REQ-PROC-02)")
+	}
+	// A route to a backend that does not exist would silently fall through
+	// to the default at runtime; refuse it at startup instead (REQ-CFG-05).
+	for model, backend := range c.ModelRoutes {
+		if _, ok := c.Backends[backend]; !ok {
+			return fmt.Errorf("model route %q -> unknown backend %q", model, backend)
+		}
 	}
 	return nil
 }

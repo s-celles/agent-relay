@@ -173,7 +173,6 @@ type server struct {
 	logger         *slog.Logger
 	agentic        core.AgenticConfig
 	agenticTokens  [][]byte
-	caps           core.Capabilities
 	outputs        *outputs.Store
 	bridge         *toolbridge.Bridge
 	toolSessions   *toolSessions
@@ -197,6 +196,13 @@ func WithLogger(l *slog.Logger) Option {
 // New builds the full HTTP handler for the given validated config and
 // backend.
 func New(cfg config.Config, backend core.Backend, opts ...Option) (http.Handler, error) {
+	return NewRouted(cfg, backend, nil, opts...)
+}
+
+// NewRouted builds the handler with model-name routing: routes maps a
+// logical model to the backend that serves it, everything else goes to the
+// default backend.
+func NewRouted(cfg config.Config, backend core.Backend, routes map[string]core.Backend, opts ...Option) (http.Handler, error) {
 	if backend == nil {
 		return nil, errors.New("nil backend")
 	}
@@ -224,6 +230,7 @@ func New(cfg config.Config, backend core.Backend, opts ...Option) (http.Handler,
 	s := &server{
 		dispatcher: &core.Dispatcher{
 			Backend: backend,
+			Routes:  routes,
 			Limiter: core.NewLimiter(cfg.MaxConcurrent),
 			Timeout: cfg.RequestTimeout,
 		},
@@ -231,7 +238,6 @@ func New(cfg config.Config, backend core.Backend, opts ...Option) (http.Handler,
 		logger:         slog.Default(),
 		agentic:        cfg.Agentic,
 		agenticTokens:  cfg.AgenticTokens,
-		caps:           backend.Capabilities(),
 		outputs:        store,
 		bridge:         bridge,
 		toolSessions:   newToolSessions(),
@@ -389,7 +395,7 @@ func (s *server) handleHealth(w http.ResponseWriter, r *http.Request) {
 // failing loudly beats a silently degraded conversation. Structured history
 // (tool_use/tool_result blocks) is always accepted.
 func (s *server) checkTools(w http.ResponseWriter, req core.InferRequest, writeErr func(http.ResponseWriter, int, string)) bool {
-	if len(req.Tools) == 0 || s.caps.ClientTools {
+	if len(req.Tools) == 0 || s.capsFor(req).ClientTools {
 		return true
 	}
 	writeErr(w, http.StatusBadRequest,
@@ -520,20 +526,28 @@ func (s *server) denyAgentic(w http.ResponseWriter, r *http.Request, reason stri
 // client, since that format makes max_tokens mandatory — but the operator is
 // warned once so oversized responses are no surprise.
 func (s *server) noteMaxTokens(req core.InferRequest) {
-	if req.MaxTokens <= 0 || s.caps.MaxTokens {
+	if req.MaxTokens <= 0 || s.capsFor(req).MaxTokens {
 		return
 	}
 	s.maxTokensWarn.Do(func() {
 		s.logger.Warn("max_tokens is accepted for wire compatibility but not enforced by this backend; responses may exceed it",
-			"backend", s.dispatcher.Backend.Name())
+			"backend", s.dispatcher.For(req.Model).Name())
 	})
+}
+
+// capsFor reports the capabilities of the backend that will actually serve
+// this request: they differ between backends (the CLI cannot enforce
+// max_tokens or sampling; a local model can), so a routed request must be
+// judged by its own backend.
+func (s *server) capsFor(req core.InferRequest) core.Capabilities {
+	return s.dispatcher.For(req.Model).Capabilities()
 }
 
 // noteSampling signals dropped sampling parameters rather than ignoring them
 // silently. Like the max_tokens warning it fires once per process: clients
 // routinely set temperature on every request.
 func (s *server) noteSampling(req core.InferRequest) {
-	if s.caps.Sampling {
+	if s.capsFor(req).Sampling {
 		return
 	}
 	params := req.UnsupportedSampling()
@@ -542,7 +556,7 @@ func (s *server) noteSampling(req core.InferRequest) {
 	}
 	s.samplingWarn.Do(func() {
 		s.logger.Warn("sampling parameters are not supported by this backend and were ignored",
-			"backend", s.dispatcher.Backend.Name(),
+			"backend", s.dispatcher.For(req.Model).Name(),
 			"params", strings.Join(params, ","))
 	})
 }

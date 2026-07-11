@@ -10,7 +10,10 @@ failure aborts startup — the relay never limps along on a half-read config.
 |---|---|---|
 | `RELAY_BIND` | `127.0.0.1:18082` | Listen address. Defaults to loopback. |
 | `RELAY_TOKENS` | *(empty)* | Comma-separated caller bearer tokens. Mandatory on non-loopback binds. |
-| `RELAY_BACKEND` | `claude` | Backend to serve (v1 ships `claude` only). |
+| `RELAY_BACKEND` | `claude` | Default backend: serves every model without a route. |
+| `RELAY_MODEL_ROUTES` | *(empty)* | Model→backend routing, e.g. `llama3=ollama,phi3=ollama`. The client keeps choosing a `model`; the relay decides which backend that means. A route to an unknown backend refuses to start. |
+| `RELAY_OLLAMA_URL` | `http://127.0.0.1:11434` | Ollama server for the `ollama` backend. |
+| `RELAY_OLLAMA_MODEL_MAP` | *(empty)* | Logical→Ollama model table, same syntax as the claude one. |
 | `RELAY_MAX_CONCURRENT` | `10` | Max simultaneous backend subprocesses; excess requests get 503. |
 | `RELAY_REQUEST_TIMEOUT` | `10m` | Default **and ceiling** for a request's deadline (Go duration, e.g. `90s`). Clients may ask for less with the `X-Request-Timeout` header; more is clamped to this value. |
 | `RELAY_LOG_LEVEL` | `info` | `debug`, `info`, `warn`, or `error`. |

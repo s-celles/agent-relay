@@ -29,6 +29,7 @@ nav:
   - Home: index.md
   - Security & threat model: security.md
   - Architecture: architecture.md
+  - Backends & routing: backends.md
   - Execution modes: execution-modes.md
   - Configuration: configuration.md
   - HTTP API: api.md

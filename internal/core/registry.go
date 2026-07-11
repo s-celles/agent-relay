@@ -24,8 +24,11 @@ func (a AgenticConfig) PermissionArgs() []string {
 }
 
 // BackendConfig carries per-backend settings from configuration to a Factory.
+// Not every backend is a subprocess: CLIPath/Workdir/EnvDeny/Agentic are for
+// CLI adapters, BaseURL for HTTP ones.
 type BackendConfig struct {
 	CLIPath  string
+	BaseURL  string
 	Workdir  string
 	ModelMap map[string]string // logical name -> backend model id
 	EnvDeny  []string          // extra env keys stripped from the subprocess

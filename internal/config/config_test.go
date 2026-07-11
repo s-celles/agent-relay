@@ -129,6 +129,39 @@ func TestFromEnvDefaults(t *testing.T) {
 	}
 }
 
+func TestModelRoutes(t *testing.T) {
+	env := map[string]string{
+		"RELAY_BACKEND":      "claude",
+		"RELAY_MODEL_ROUTES": "llama3=ollama, phi3=ollama ,qwen3.5=ollama",
+	}
+	cfg, err := FromEnv(func(k string) string { return env[k] })
+	if err != nil {
+		t.Fatalf("FromEnv: %v", err)
+	}
+	if cfg.ModelRoutes["llama3"] != "ollama" || cfg.ModelRoutes["qwen3.5"] != "ollama" {
+		t.Errorf("ModelRoutes = %v", cfg.ModelRoutes)
+	}
+	// Backends named in the routes must be instantiated too.
+	if _, ok := cfg.Backends["ollama"]; !ok {
+		t.Errorf("routed backend not configured: %v", cfg.Backends)
+	}
+	if err := cfg.Validate(); err != nil {
+		t.Errorf("Validate: %v", err)
+	}
+}
+
+func TestModelRoutesRejectUnknownBackend(t *testing.T) {
+	cfg, err := FromEnv(func(k string) string {
+		return map[string]string{"RELAY_MODEL_ROUTES": "x=nosuchbackend"}[k]
+	})
+	if err != nil {
+		t.Fatalf("FromEnv: %v", err)
+	}
+	if err := cfg.Validate(); err == nil {
+		t.Fatal("a route to an unknown backend must be refused at startup")
+	}
+}
+
 func TestFromEnvParsing(t *testing.T) {
 	env := map[string]string{
 		"RELAY_BIND":             "100.64.0.5:9000",

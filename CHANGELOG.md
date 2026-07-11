@@ -9,6 +9,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Second backend: `ollama`** (`internal/backend/ollama`) — a local Ollama
+  server over HTTP, deliberately a different *kind* of adapter than the
+  subprocess-based CLI, which exercises the registry seam (REQ-BK-03):
+  adding it touched neither the wire adapters nor the core. It streams,
+  honors `max_tokens` and the sampling parameters (which the CLI cannot),
+  calls client-defined tools natively (on models that support them —
+  `qwen3.5` does, `llama3` does not, and the server's refusal is surfaced to
+  the caller), and sends images natively. `core.BackendConfig` gains
+  `BaseURL` for HTTP backends.
+- **Model-name routing (DQ-2 resolved).** `RELAY_MODEL_ROUTES`
+  (`llama3=ollama,phi3=ollama`) sends a logical model to a specific backend;
+  unrouted models go to `RELAY_BACKEND`. Clients stay backend-agnostic — they
+  name a model, as against the real API. A route to an unknown backend
+  refuses to start. Capabilities (`max_tokens`, sampling, client tools) are
+  now resolved **per request** from the backend that will serve it, not
+  frozen at startup.
+- `docs/backends.md`: the two backends side by side, and why routing.
 - **Client-defined tool execution.** `tools[]` now works: the relay runs the
   standard Messages API tool loop (`stop_reason: "tool_use"` → the caller
   executes the tool → `tool_result`), so the official SDKs work unmodified.

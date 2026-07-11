@@ -107,6 +107,48 @@ func TestDispatcherCancellation(t *testing.T) {
 	}
 }
 
+type namedBackend struct {
+	fakeBackend
+	name string
+	caps Capabilities
+}
+
+func (n *namedBackend) Name() string               { return n.name }
+func (n *namedBackend) Capabilities() Capabilities { return n.caps }
+
+func TestDispatcherRoutesByModel(t *testing.T) {
+	def := &namedBackend{name: "claude"}
+	local := &namedBackend{name: "ollama", caps: Capabilities{MaxTokens: true}}
+	d := &Dispatcher{
+		Backend: def,
+		Limiter: NewLimiter(2),
+		Routes:  map[string]Backend{"llama3": local},
+	}
+
+	if err := d.Do(context.Background(), InferRequest{Model: "sonnet"}, &collectSink{}); err != nil {
+		t.Fatalf("Do: %v", err)
+	}
+	if def.calls.Load() != 1 || local.calls.Load() != 0 {
+		t.Fatalf("unrouted model must go to the default backend (def=%d local=%d)",
+			def.calls.Load(), local.calls.Load())
+	}
+
+	if err := d.Do(context.Background(), InferRequest{Model: "llama3"}, &collectSink{}); err != nil {
+		t.Fatalf("Do: %v", err)
+	}
+	if local.calls.Load() != 1 {
+		t.Fatal("a routed model must reach its backend")
+	}
+
+	// Capabilities follow the routed backend, not the default one.
+	if !d.For("llama3").Capabilities().MaxTokens {
+		t.Error("For() must resolve the backend serving this model")
+	}
+	if d.For("sonnet").Name() != "claude" {
+		t.Error("For() must fall back to the default backend")
+	}
+}
+
 func TestDispatcherPerRequestTimeout(t *testing.T) {
 	// A request may ask for a shorter deadline than the dispatcher default.
 	fb := &fakeBackend{block: true}

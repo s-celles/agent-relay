@@ -46,6 +46,7 @@ curl -N http://127.0.0.1:18082/v1/messages \
 
 - [Security & threat model](security.md) — risks, trust boundaries, deployment postures
 - [Architecture](architecture.md) — the three-layer pipeline and neutral model
+- [Backends & routing](backends.md) — claude and ollama, routing by model name
 - [Execution modes](execution-modes.md) — inference vs agentic, in depth
 - [Configuration](configuration.md) — environment variables and startup guards
 - [HTTP API](api.md) — endpoints, wire formats, error shapes

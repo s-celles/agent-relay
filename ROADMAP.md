@@ -49,11 +49,16 @@ What is known to be missing or deferred, relative to the design document
   subprocess between turns, so the standard Messages API tool loop (and the
   official SDKs) work unmodified. Remaining: `tool_choice` is not enforced,
   and a parked conversation holds a concurrency slot.
-- [ ] **Second backend (Gemini or Codex).** The registry seam exists
-  (REQ-BK-03) but is unexercised; a second adapter would prove it.
-- [ ] **Model-map routing across backends.** When a second backend lands,
-  route requests by logical model name instead of the global
-  `RELAY_BACKEND` selection (resolves DQ-2 fully).
+- [x] **Second backend: Ollama.** A local-model backend of a deliberately
+  different kind (HTTP client, not a subprocess), which proves the registry
+  seam (REQ-BK-03): it touched neither the wire adapters nor the core. It
+  honors `max_tokens` and sampling (which the CLI cannot) and calls client
+  tools natively — on models that support them.
+- [x] **Model-map routing across backends (DQ-2 resolved).**
+  `RELAY_MODEL_ROUTES` sends a logical model to a backend; unrouted models go
+  to `RELAY_BACKEND`; a route to an unknown backend refuses to start.
+  Capabilities are now resolved **per request**, from the backend that will
+  actually serve it.
 - [ ] **NixOS packaging.** `docs/deployment.md` sketches `buildGoModule` +
   a systemd module; nothing declarative is in-tree.
 - [ ] **Native multi-turn conversations.** History is currently flattened
