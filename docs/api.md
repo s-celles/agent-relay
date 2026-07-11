@@ -109,6 +109,33 @@ while resp.stop_reason == "tool_use":
     resp = client.messages.create(model="haiku", max_tokens=300, tools=TOOLS, messages=msgs)
 ```
 
+The parking mechanism, end to end — one CLI subprocess spans the whole loop,
+blocked on the caller between turns:
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant Client
+    participant Relay
+    participant Bridge as MCP bridge<br/>(loopback)
+    participant CLI as claude CLI
+
+    Client->>Relay: POST /v1/messages (tools[])
+    Relay->>Bridge: new session (exposes your tools)
+    Relay->>CLI: spawn --mcp-config --tools ""
+    CLI->>Bridge: tools/list
+    CLI->>Bridge: tools/call get_weather
+    Note over Bridge,CLI: subprocess parks<br/>(blocked, holds a slot)
+    Bridge-->>Relay: parked call
+    Relay-->>Client: stop_reason "tool_use"
+    Client->>Client: execute the tool
+    Client->>Relay: POST /v1/messages (tool_result)
+    Relay->>Bridge: resolve(call, result)
+    Bridge-->>CLI: tools/call returns
+    Note over CLI: same subprocess resumes
+    CLI-->>Client: final answer (message_stop)
+```
+
 **How it works.** The claude CLI has no raw tool-calling mode — but it speaks
 MCP. So the relay hosts a small MCP server exposing *your* tools and points
 the CLI at it (`--mcp-config`, with `--allowedTools` restricted to those tool

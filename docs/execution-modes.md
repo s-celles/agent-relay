@@ -46,6 +46,20 @@ remote *agent execution* service, not just an inference proxy.
 **How a request becomes agentic** — four independent layers, each of which
 can say no:
 
+```mermaid
+flowchart TD
+    req(["Request"]) --> l1{"RELAY_AGENTIC_ENABLED<br/>= true?"}
+    l1 -- no --> inf["Inference mode<br/>(no side effects)"]
+    l1 -- yes --> l3{"per-request authz on?"}
+    l3 -- no --> agentic["Agentic execution<br/>(loopback-only posture)"]
+    l3 -- yes --> cred{"X-Agentic-Authorization<br/>present?"}
+    cred -- "absent" --> inf
+    cred -- "wrong" --> deny["403 — before any subprocess"]
+    cred -- "valid token" --> l4{"backend configured<br/>for agentic?"}
+    l4 -- no --> deny
+    l4 -- yes --> agentic
+```
+
 1. **Operator opt-in**: `RELAY_AGENTIC_ENABLED=true`. Without it, agentic
    requests are rejected and the startup log stays quiet. With it, the relay
    logs a loud warning at startup.

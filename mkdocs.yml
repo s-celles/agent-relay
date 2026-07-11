@@ -44,7 +44,11 @@ markdown_extensions:
   - admonition
   - tables
   - pymdownx.highlight
-  - pymdownx.superfences
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
   # Lets docs/security.md include the root SECURITY.md (single source of truth).
   - pymdownx.snippets:
       base_path: ["."]

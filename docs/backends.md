@@ -26,6 +26,13 @@ not-enforced warning; ask `phi3` and it is enforced.
 The client keeps doing what it does against the real API — naming a model.
 The relay decides which backend that means:
 
+```mermaid
+flowchart LR
+    req(["model: ?"]) --> route{"in<br/>RELAY_MODEL_ROUTES?"}
+    route -- "llama3, phi3…" --> ollama["ollama backend<br/>(local, free)"]
+    route -- "unrouted (haiku, sonnet…)" --> def["RELAY_BACKEND<br/>= claude (subscription)"]
+```
+
 ```sh
 RELAY_BACKEND=claude \
 RELAY_MODEL_ROUTES="llama3=ollama,phi3=ollama,qwen3.5=ollama" \

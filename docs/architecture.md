@@ -3,11 +3,26 @@
 The relay is a three-layer pipeline with a neutral model in the middle, so
 the wire format and the backend never touch each other directly.
 
-```
-client ──HTTP──▶ [ API layer ]  ──InferRequest──▶ [ core dispatch ] ──▶ [ Backend ]
-                  Anthropic /                        auth, limiter,        claude CLI
-                  OpenAI wire                         lifecycle             subprocess
-        ◀──SSE──  encoders     ◀────Event stream────  EventSink      ◀────  stream-json
+```mermaid
+flowchart LR
+    client(["Client"])
+    subgraph api["API layer — internal/api · internal/server"]
+        direction TB
+        decode["decode + auth<br/>+ rate limit"]
+        encode["SSE / JSON<br/>encode (EventSink)"]
+    end
+    subgraph core["Core — internal/core"]
+        dispatch["Dispatcher<br/>limiter · timeout · routing"]
+    end
+    subgraph backend["Backend — internal/backend"]
+        cli["claude CLI subprocess<br/>· or · ollama HTTP"]
+    end
+
+    client -- "HTTP: Messages / Chat" --> decode
+    decode -- "InferRequest" --> dispatch
+    dispatch -- "Infer(ctx, req, sink)" --> cli
+    cli -- "stream-json → Event" --> encode
+    encode -- "SSE / JSON" --> client
 ```
 
 - **API layer** (`internal/api/*`, `internal/server`) — HTTP handlers plus
@@ -50,12 +65,19 @@ one new package under `internal/backend/` that calls `core.Register` from an
 
 ## Request lifecycle
 
-```
-        acquire slot           start ok            stream done
-Queued ───────────────▶ Starting ────────▶ Streaming ───────────▶ Done
-   │ slot full             │ spawn err         │ ctx cancelled        (defer: release slot,
-   ▼                       ▼                   ▼                        reap process)
- 503 Full               Failed             Cancelled ──▶ (kill process group)
+```mermaid
+stateDiagram-v2
+    [*] --> Queued
+    Queued --> Full: pool full
+    Queued --> Starting: slot acquired
+    Starting --> Failed: spawn error
+    Starting --> Streaming: started
+    Streaming --> Done: stream complete
+    Streaming --> Cancelled: ctx cancelled / timeout
+    Full --> [*]: 503
+    Failed --> [*]: 502
+    Cancelled --> [*]: kill process group
+    Done --> [*]: release slot · reap
 ```
 
 - Slot acquisition is **non-blocking**: a full pool yields 503 immediately,
@@ -64,7 +86,30 @@ Queued ───────────────▶ Starting ─────
 - The request timeout is a `context.WithTimeout` wrapping the HTTP request
   context; cancellation (client disconnect or timeout) kills the whole
   subprocess process group, and `Infer` does not return until the process is
-  reaped.
+  reaped. An expired deadline answers 504, not 502, so a client can tell a
+  timeout from a backend failure.
+
+The happy path, as a sequence:
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant C as Client
+    participant S as Server<br/>(auth · limiter)
+    participant D as Dispatcher
+    participant B as claude backend
+    C->>S: POST /v1/messages
+    S->>S: authenticate · acquire slot
+    S->>D: InferRequest
+    D->>B: Infer(ctx, req, sink)
+    B->>B: spawn CLI · prompt via stdin
+    loop stream-json lines
+        B-->>C: SSE event (message_start, deltas…)
+    end
+    B-->>C: message_stop (+ usage)
+    B->>D: return (process reaped)
+    D->>S: release slot (defer)
+```
 
 ## Claude backend specifics
 
@@ -72,7 +117,9 @@ Queued ───────────────▶ Starting ─────
   process-list leaks).
 - The subprocess environment is `os.Environ()` minus a deny list:
   `ANTHROPIC_BASE_URL` / `OPENAI_BASE_URL` (would loop the CLI back through
-  the relay), `CLAUDECODE`, and any operator-configured keys.
+  the relay), `CLAUDECODE`, `ANTHROPIC_API_KEY` / `ANTHROPIC_AUTH_TOKEN` (so
+  an inherited key cannot override the subscription), and any
+  operator-configured keys (`RELAY_ENV_DENY`).
 - `stream-json` output is parsed **defensively**: unknown line types and
   unknown fields are ignored, so CLI schema drift degrades gracefully.
 - No permission-bypass flags are ever passed on the default inference path;
