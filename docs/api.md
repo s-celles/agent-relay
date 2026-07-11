@@ -90,7 +90,9 @@ rejected with 400 unless the backend reports client-tool support.
 The claude CLI backend does **not**: the CLI runs its own agent loop with its
 own tools and has no raw tool-calling mode. In practice this means agentic
 clients (the Claude Agent SDK, Claude Code) still cannot use the relay as
-their backend; classic chat clients are unaffected.
+their backend; classic chat clients are unaffected. For the full comparison
+of what the API offers that the relay cannot, see
+[API vs relay limitations](limitations.md).
 
 ## `POST /v1/chat/completions` — OpenAI Chat Completions
 

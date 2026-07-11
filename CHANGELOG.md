@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `docs/limitations.md`: honest map of what the Anthropic API offers that
+  the CLI-backed relay cannot (tool calling, structured outputs, sampling
+  control, caching…), with the bridged and degraded cases.
 - Vision/PDF bridge: base64 `image` and `document` content blocks are
   accepted on `/v1/messages` (png/jpeg/gif/webp/pdf, 20 MiB decoded per
   block). The claude backend materializes attachments into a per-request
