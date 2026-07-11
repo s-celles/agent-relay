@@ -53,6 +53,12 @@ the upstream APIs, which is exactly what this document declines to do.
 <script src="https://unpkg.com/swagger-ui-dist@5/swagger-ui-bundle.js"></script>
 <script>
   window.addEventListener("load", function () {
-    SwaggerUIBundle({ url: "openapi.json", dom_id: "#swagger", supportedSubmitMethods: [] });
+    // Pages are served with directory URLs (/openapi/), so a bare "openapi.json"
+    // would resolve one level too deep. Resolve it against the page instead.
+    SwaggerUIBundle({
+      url: new URL("../openapi.json", window.location.href).href,
+      dom_id: "#swagger",
+      supportedSubmitMethods: []
+    });
   });
 </script>
