@@ -56,7 +56,7 @@ curl -N http://127.0.0.1:18082/v1/messages \
 - [API vs relay limitations](limitations.md) — what the CLI backend cannot do
 - [Deployment](deployment.md) — Docker, docker-compose, NixOS notes
 - [Testing](testing.md) — test strategy (no tokens are ever spent in tests)
-- [A2A interop check](interop.md) — the one check that is run by hand, and why
+- [Live interop checks](interop.md) — A2A and client-tool loops, run by hand
 
 ## Disclaimer — terms of service
 

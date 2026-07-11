@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Client-tool interop check** (`docs/interop/tools_check.py`): drives the MCP
+  client-tool bridge with the **official Anthropic SDK**'s tool loop, across
+  four `tool_use` patterns — a side-effecting tool is called (not narrated) and
+  routes back to the client, a compute tool's result flows back into the answer,
+  the model selects the right tool among several, and a tool error is handled.
+  Like the A2A check it is run by hand and kept out of CI (it spends tokens),
+  because the behaviour it verifies — the model calling the caller's tool rather
+  than its own native one — cannot be reproduced with the stub CLI the Go tests
+  use. It is the check that would have caught the tool-bridge regression below.
+
 ### Fixed
 
 - **Client-defined tools were never actually invoked by the claude CLI.** When
