@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/json"
 	"strings"
+	"time"
 )
 
 type Role string
@@ -107,6 +108,10 @@ type InferRequest struct {
 	// Backends key sessions by working directory, so the server only allows
 	// it where the workdir is stable.
 	SessionID string
+	// Timeout overrides the dispatcher's default deadline for this request
+	// (X-Request-Timeout, clamped by the operator's ceiling). Zero means
+	// "use the default".
+	Timeout time.Duration
 }
 
 type EventKind int

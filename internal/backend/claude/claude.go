@@ -322,6 +322,12 @@ func (b *Backend) Infer(ctx context.Context, req core.InferRequest, sink core.Ev
 		return fmt.Errorf("read backend output: %w", err)
 	}
 	if err := wait(); err != nil {
+		// A cancelled or timed-out context killed the process: report that
+		// cause, not the resulting "signal: killed", so callers can tell a
+		// deadline from a backend failure.
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return fmt.Errorf("backend stopped: %w", ctxErr)
+		}
 		// The CLI exits non-zero after an error result line; the parsed
 		// message already reached the sink and is strictly more useful than
 		// the bare exit status.

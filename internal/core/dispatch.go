@@ -26,9 +26,15 @@ func (d *Dispatcher) Do(ctx context.Context, req InferRequest, sink EventSink) e
 	}
 	defer d.Limiter.Release()
 
-	if d.Timeout > 0 {
+	// A request may carry its own deadline (the server clamps it to the
+	// operator's ceiling); otherwise the dispatcher default applies.
+	timeout := d.Timeout
+	if req.Timeout > 0 {
+		timeout = req.Timeout
+	}
+	if timeout > 0 {
 		var cancel context.CancelFunc
-		ctx, cancel = context.WithTimeout(ctx, d.Timeout)
+		ctx, cancel = context.WithTimeout(ctx, timeout)
 		defer cancel()
 	}
 	return d.Backend.Infer(ctx, req, sink)

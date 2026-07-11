@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Per-request timeout: `X-Request-Timeout` (a Go duration) sets a single
+  request's deadline; `RELAY_REQUEST_TIMEOUT` becomes both the default and
+  the ceiling (longer requests are clamped, and the applied value is echoed
+  back in the response header); a malformed value is a 400.
 - Backpressure signals: 503 (pool busy) and the new 429 (quota exceeded)
   both carry a `Retry-After` header, and `RELAY_RATE_LIMIT_RPM` enables a
   per-caller token bucket (off by default; keyed by credential, or by remote
@@ -84,6 +88,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- An expired request deadline now answers **504 Gateway Timeout** instead of
+  502: the claude backend propagates the context cause (deadline or client
+  disconnect) rather than the resulting "signal: killed", so a client can
+  tell its own timeout from a backend failure.
 - DQ-3 resolved: configuration is env-only, final (no file overlay); the
   lost requirements document is superseded by `spec.md` as the root
   authoritative source.

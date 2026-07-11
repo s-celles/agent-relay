@@ -23,6 +23,7 @@ type fakeBackend struct {
 	lastAgentic   atomic.Bool
 	lastSessionID atomic.Value // string
 	lastOutputDir atomic.Value // string
+	lastTimeout   atomic.Int64 // time.Duration
 	block         bool
 	clientTools   bool
 	maxTokens     bool
@@ -46,6 +47,7 @@ func (f *fakeBackend) Infer(ctx context.Context, req core.InferRequest, sink cor
 	f.lastAgentic.Store(req.Agentic)
 	f.lastSessionID.Store(req.SessionID)
 	f.lastOutputDir.Store(req.OutputDir)
+	f.lastTimeout.Store(int64(req.Timeout))
 	if f.sessionID != "" {
 		if err := sink.Emit(ctx, core.Event{Kind: core.EventSession, SessionID: f.sessionID}); err != nil {
 			return err
@@ -85,6 +87,10 @@ func (f *fakeBackend) Infer(ctx context.Context, req core.InferRequest, sink cor
 func (f *fakeBackend) sessionSeen() string {
 	v, _ := f.lastSessionID.Load().(string)
 	return v
+}
+
+func (f *fakeBackend) timeoutSeen() time.Duration {
+	return time.Duration(f.lastTimeout.Load())
 }
 
 func (f *fakeBackend) outputDirSeen() string {
@@ -244,6 +250,76 @@ func TestBusyReturns503(t *testing.T) {
 
 	cancel()
 	<-firstDone
+}
+
+func TestPerRequestTimeoutHeader(t *testing.T) {
+	withMax := func(c *config.Config) { c.RequestTimeout = time.Minute }
+
+	t.Run("shorter than the ceiling is honored and echoed", func(t *testing.T) {
+		fb := &fakeBackend{}
+		h := newTestServer(t, fb, withMax)
+		rec := postMessages(t, h, map[string]string{"X-Request-Timeout": "10s"})
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status = %d", rec.Code)
+		}
+		if got := rec.Header().Get("X-Request-Timeout"); got != "10s" {
+			t.Errorf("echoed timeout = %q, want 10s", got)
+		}
+		if fb.timeoutSeen() != 10*time.Second {
+			t.Errorf("backend deadline = %v", fb.timeoutSeen())
+		}
+	})
+
+	t.Run("above the ceiling is clamped, and says so", func(t *testing.T) {
+		fb := &fakeBackend{}
+		h := newTestServer(t, fb, withMax)
+		rec := postMessages(t, h, map[string]string{"X-Request-Timeout": "10m"})
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status = %d", rec.Code)
+		}
+		if got := rec.Header().Get("X-Request-Timeout"); got != "1m0s" {
+			t.Errorf("echoed timeout = %q, want the ceiling 1m0s", got)
+		}
+		if fb.timeoutSeen() != time.Minute {
+			t.Errorf("backend deadline = %v, want the ceiling", fb.timeoutSeen())
+		}
+	})
+
+	t.Run("malformed is a 400", func(t *testing.T) {
+		fb := &fakeBackend{}
+		h := newTestServer(t, fb, withMax)
+		rec := postMessages(t, h, map[string]string{"X-Request-Timeout": "soon"})
+		if rec.Code != http.StatusBadRequest {
+			t.Fatalf("status = %d, want 400", rec.Code)
+		}
+		if fb.calls.Load() != 0 {
+			t.Error("a malformed timeout must not reach the backend")
+		}
+	})
+
+	t.Run("absent header leaves the default", func(t *testing.T) {
+		fb := &fakeBackend{}
+		h := newTestServer(t, fb, withMax)
+		rec := postMessages(t, h, nil)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status = %d", rec.Code)
+		}
+		if fb.timeoutSeen() != 0 {
+			t.Errorf("per-request timeout = %v, want unset", fb.timeoutSeen())
+		}
+	})
+}
+
+func TestTimeoutReportsGatewayTimeout(t *testing.T) {
+	// A deadline the caller (or operator) set is not a backend failure: 504
+	// lets a harness tell "my deadline hit" from "the backend broke".
+	h := newTestServer(t, &fakeBackend{block: true}, func(c *config.Config) {
+		c.RequestTimeout = 30 * time.Millisecond
+	})
+	rec := postMessages(t, h, nil)
+	if rec.Code != http.StatusGatewayTimeout {
+		t.Fatalf("status = %d, want 504", rec.Code)
+	}
 }
 
 func TestBusyCarriesRetryAfter(t *testing.T) {

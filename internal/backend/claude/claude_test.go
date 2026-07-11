@@ -2,6 +2,7 @@ package claude
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -185,8 +186,30 @@ sleep 60
 	if err == nil {
 		t.Fatal("Infer should report an error on cancellation")
 	}
+	// The cause must survive: callers distinguish a deadline or a disconnect
+	// from a backend failure (the server maps it to 504).
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("err = %v, want it to wrap context.Canceled", err)
+	}
 	if elapsed > 5*time.Second {
 		t.Fatalf("Infer took %v to return after cancel; subprocess not killed", elapsed)
+	}
+}
+
+func TestInferReportsDeadlineExceeded(t *testing.T) {
+	script := `
+cat > /dev/null
+sleep 60
+`
+	b := newTestBackend(t, core.BackendConfig{CLIPath: stubCLI(t, script)})
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+
+	err := b.Infer(ctx, core.InferRequest{
+		Messages: []core.Message{core.NewTextMessage(core.RoleUser, "x")},
+	}, &collectSink{})
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("err = %v, want it to wrap context.DeadlineExceeded", err)
 	}
 }
 

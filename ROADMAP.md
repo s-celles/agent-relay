@@ -89,9 +89,10 @@ emits and the relay currently drops.
   (off by default), counted in `/v1/metrics` as `rate_limited`. Remaining
   ideas: a token/cost budget rather than a request-rate quota, and shared
   state across replicas.
-- [ ] **Per-request timeout override.** An `X-Request-Timeout` header capped
-  by `RELAY_REQUEST_TIMEOUT`: a long agentic task and a short classification
-  should not share one global deadline.
+- [x] **Per-request timeout override.** `X-Request-Timeout` sets this
+  request's deadline, clamped by `RELAY_REQUEST_TIMEOUT` (now both default
+  and ceiling) and echoed back as applied. An expired deadline answers 504
+  (not 502), so a client can tell it apart from a backend failure.
 
 ## Wire-compatibility polish
 

@@ -12,7 +12,7 @@ failure aborts startup — the relay never limps along on a half-read config.
 | `RELAY_TOKENS` | *(empty)* | Comma-separated caller bearer tokens. Mandatory on non-loopback binds. |
 | `RELAY_BACKEND` | `claude` | Backend to serve (v1 ships `claude` only). |
 | `RELAY_MAX_CONCURRENT` | `10` | Max simultaneous backend subprocesses; excess requests get 503. |
-| `RELAY_REQUEST_TIMEOUT` | `10m` | Per-request timeout (Go duration syntax, e.g. `90s`). |
+| `RELAY_REQUEST_TIMEOUT` | `10m` | Default **and ceiling** for a request's deadline (Go duration, e.g. `90s`). Clients may ask for less with the `X-Request-Timeout` header; more is clamped to this value. |
 | `RELAY_LOG_LEVEL` | `info` | `debug`, `info`, `warn`, or `error`. |
 | `RELAY_CLAUDE_CLI` | `claude` | Path to the `claude` binary. |
 | `RELAY_CLAUDE_WORKDIR` | *(empty)* | Working directory for the subprocess (empty = inherit). In agentic mode this is the *parent* under which each request gets its own ephemeral directory. |

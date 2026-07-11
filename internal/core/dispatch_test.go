@@ -107,6 +107,21 @@ func TestDispatcherCancellation(t *testing.T) {
 	}
 }
 
+func TestDispatcherPerRequestTimeout(t *testing.T) {
+	// A request may ask for a shorter deadline than the dispatcher default.
+	fb := &fakeBackend{block: true}
+	d := &Dispatcher{Backend: fb, Limiter: NewLimiter(1), Timeout: time.Hour}
+
+	start := time.Now()
+	err := d.Do(context.Background(), InferRequest{Timeout: 30 * time.Millisecond}, &collectSink{})
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("err = %v, want DeadlineExceeded", err)
+	}
+	if elapsed := time.Since(start); elapsed > time.Second {
+		t.Fatalf("waited %v: the per-request timeout was ignored", elapsed)
+	}
+}
+
 func TestDispatcherTimeout(t *testing.T) {
 	fb := &fakeBackend{block: true}
 	d := &Dispatcher{Backend: fb, Limiter: NewLimiter(1), Timeout: 30 * time.Millisecond}

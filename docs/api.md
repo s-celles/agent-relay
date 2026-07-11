@@ -148,6 +148,25 @@ flags, each in its own ephemeral working directory. See
 [execution-modes.md](execution-modes.md) for the full inference-vs-agentic
 comparison.
 
+### Per-request timeout
+
+A long agentic task and a short classification should not share one global
+deadline. Send `X-Request-Timeout` (a Go duration: `90s`, `5m`) to set this
+request's deadline:
+
+```sh
+curl http://127.0.0.1:18082/v1/messages -H "x-api-key: $TOKEN" \
+  -H "X-Request-Timeout: 30s" -d '{…}'
+```
+
+`RELAY_REQUEST_TIMEOUT` is both the default **and the ceiling**: a longer
+request is clamped rather than refused, and the response echoes the value
+actually applied in `X-Request-Timeout`. A malformed duration is a 400.
+
+When the deadline expires the relay answers **504 Gateway Timeout** (not
+502), so a client can tell "my deadline hit" from "the backend broke". The
+subprocess is killed with its process group; nothing is left running.
+
 ### Session continuity (resuming a conversation)
 
 Every response carries the backend's conversation id:
@@ -286,6 +305,7 @@ per request.
 | 429 | Per-caller rate limit exceeded. Carries `Retry-After`. No subprocess was spawned. |
 | 502 | Backend failed before producing a stream. |
 | 503 | All concurrency slots busy. Carries `Retry-After`. No subprocess was spawned. |
+| 504 | The request deadline expired (`X-Request-Timeout`, or `RELAY_REQUEST_TIMEOUT`). |
 
 Both 429 and 503 carry a `Retry-After` header (seconds), so a client fanning
 requests out can pace itself instead of hammering. The quota is off by

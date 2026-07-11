@@ -290,6 +290,29 @@ func (s *server) prepareOutputs(w http.ResponseWriter, r *http.Request, req *cor
 	return true
 }
 
+// prepareTimeout honors X-Request-Timeout: a long agentic task and a short
+// classification should not share one global deadline. The operator's
+// RELAY_REQUEST_TIMEOUT is both the default and the ceiling; a longer request
+// is clamped rather than refused, and the effective value is echoed back.
+func (s *server) prepareTimeout(w http.ResponseWriter, r *http.Request, req *core.InferRequest, writeErr func(http.ResponseWriter, int, string)) bool {
+	raw := r.Header.Get("X-Request-Timeout")
+	if raw == "" {
+		return true
+	}
+	d, err := time.ParseDuration(raw)
+	if err != nil || d <= 0 {
+		writeErr(w, http.StatusBadRequest,
+			"X-Request-Timeout must be a positive Go duration (e.g. 90s, 5m)")
+		return false
+	}
+	if ceiling := s.dispatcher.Timeout; ceiling > 0 && d > ceiling {
+		d = ceiling
+	}
+	req.Timeout = d
+	w.Header().Set("X-Request-Timeout", d.String())
+	return true
+}
+
 // prepareSession honors X-Session-Id. Backends key their sessions by working
 // directory, so resuming is refused where the workdir is ephemeral (an
 // agentic request without a retained workspace): failing here beats the
@@ -475,6 +498,9 @@ func (s *server) handleMessages(w http.ResponseWriter, r *http.Request) {
 	if !s.prepareSession(w, r, &req, anthropic.WriteError) {
 		return
 	}
+	if !s.prepareTimeout(w, r, &req, anthropic.WriteError) {
+		return
+	}
 	req.Traces = r.Header.Get("X-Agent-Traces") == "true"
 	id := "msg_" + obs.NewRequestID()
 	if req.Stream {
@@ -510,6 +536,9 @@ func (s *server) handleChat(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !s.prepareSession(w, r, &req, openai.WriteError) {
+		return
+	}
+	if !s.prepareTimeout(w, r, &req, openai.WriteError) {
 		return
 	}
 	id := "chatcmpl-" + obs.NewRequestID()
@@ -578,6 +607,11 @@ func (s *server) reportDispatchError(w http.ResponseWriter, r *http.Request, err
 		// come back rather than leaving it to guess.
 		setRetryAfter(w, time.Second)
 		writeErr(w, http.StatusServiceUnavailable, "all backend slots busy, retry later")
+	case errors.Is(err, context.DeadlineExceeded) && !streamStarted:
+		// The deadline is the caller's or the operator's, not a backend
+		// failure — 504 lets a client tell the two apart.
+		s.metrics.BackendError()
+		writeErr(w, http.StatusGatewayTimeout, "request timed out")
 	case streamStarted:
 		s.metrics.BackendError()
 		s.logger.Error("backend error mid-stream", "err", err, "path", r.URL.Path)
