@@ -700,9 +700,15 @@ func (s *server) handleMessages(w http.ResponseWriter, r *http.Request) {
 	}
 	sink := anthropic.NewCollectSink(id, req.Model)
 	if s.runWithTools(w, r, req, sink, anthropic.WriteError) {
-		if sink.Err() == nil {
-			_ = sink.WriteResponse(w)
+		// An in-band backend error (e.g. "this model does not support tools")
+		// must reach the caller. Writing nothing would answer 200 with an
+		// empty body — a silent success.
+		if err := sink.Err(); err != nil {
+			s.metrics.BackendError()
+			anthropic.WriteError(w, http.StatusBadGateway, err.Error())
+			return
 		}
+		_ = sink.WriteResponse(w)
 		return
 	}
 	if !s.runCollected(w, r, req, sink, sink.Err, anthropic.WriteError) {
@@ -748,9 +754,12 @@ func (s *server) handleChat(w http.ResponseWriter, r *http.Request) {
 	}
 	sink := openai.NewCollectSink(id, req.Model)
 	if s.runWithTools(w, r, req, sink, openai.WriteError) {
-		if sink.Err() == nil {
-			_ = sink.WriteResponse(w)
+		if err := sink.Err(); err != nil {
+			s.metrics.BackendError()
+			openai.WriteError(w, http.StatusBadGateway, err.Error())
+			return
 		}
+		_ = sink.WriteResponse(w)
 		return
 	}
 	if !s.runCollected(w, r, req, sink, sink.Err, openai.WriteError) {

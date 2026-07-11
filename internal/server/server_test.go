@@ -1593,3 +1593,43 @@ func TestToolRequestsAreAccounted(t *testing.T) {
 		t.Errorf("cost_usd_total = %v, want 0.02 — the tool path spends the subscription too", m.CostUSD)
 	}
 }
+
+// erroringToolBackend accepts tools but fails in-band, as the ollama backend
+// does when a model cannot do tool calling ("llama3 does not support tools").
+type erroringToolBackend struct{ fakeBackend }
+
+func (b *erroringToolBackend) Capabilities() core.Capabilities {
+	return core.Capabilities{Streaming: true, ClientTools: true}
+}
+
+func (b *erroringToolBackend) Infer(ctx context.Context, req core.InferRequest, sink core.EventSink) error {
+	b.calls.Add(1)
+	if err := sink.Emit(ctx, core.Event{Kind: core.EventMessageStart}); err != nil {
+		return err
+	}
+	return sink.Emit(ctx, core.Event{
+		Kind: core.EventError, Err: errors.New("llama3 does not support tools"),
+	})
+}
+
+func TestToolRequestSurfacesBackendError(t *testing.T) {
+	// A non-streaming tool request whose backend fails in-band used to answer
+	// 200 with an *empty body*: the collected sink held the error, and the
+	// handler wrote nothing at all. A caller saw a silent success.
+	h := newTestServer(t, &erroringToolBackend{})
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("POST", "/v1/messages", strings.NewReader(toolsBody))
+	req.Header.Set("x-api-key", "good-token")
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadGateway {
+		t.Fatalf("status = %d, want 502 — an in-band backend error must not read as success", rec.Code)
+	}
+	if rec.Body.Len() == 0 {
+		t.Fatal("empty body: the caller is told nothing")
+	}
+	if !strings.Contains(rec.Body.String(), "does not support tools") {
+		t.Errorf("body = %s, want the backend's reason", rec.Body)
+	}
+}

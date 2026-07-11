@@ -26,6 +26,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **A tool request whose backend failed in-band answered 200 with an empty
+  body.** The non-streaming tool path collected the error into the sink and
+  then wrote *nothing at all* — a caller saw a silent success. It surfaces
+  when a local model cannot do tool calling (`llama3 does not support tools`),
+  which is exactly what an agent client provokes, since it sends its tools on
+  every request. Both wires now answer 502 with the backend's reason, as the
+  non-tool path already did. (Streaming was unaffected: the error was already
+  delivered as an in-stream event.)
 - **Client-tool requests were never accounted.** An agent client (OpenCode,
   LangChain…) sends its tools on *every* request, so the tool path is the one
   that actually spends the subscription — and it was the one path that skipped
