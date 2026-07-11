@@ -21,11 +21,12 @@ type fakeBackend struct {
 	lastAgentic atomic.Bool
 	block       bool
 	clientTools bool
+	maxTokens   bool
 }
 
 func (f *fakeBackend) Name() string { return "fake" }
 func (f *fakeBackend) Capabilities() core.Capabilities {
-	return core.Capabilities{Streaming: true, ClientTools: f.clientTools}
+	return core.Capabilities{Streaming: true, ClientTools: f.clientTools, MaxTokens: f.maxTokens}
 }
 func (f *fakeBackend) Infer(ctx context.Context, req core.InferRequest, sink core.EventSink) error {
 	f.calls.Add(1)
@@ -526,6 +527,58 @@ func TestStructuredHistoryAccepted(t *testing.T) {
 	h.ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, body: %s", rec.Code, rec.Body.String())
+	}
+}
+
+// newLoggedServer is newTestServer with the server's slog output captured,
+// so tests can assert on emitted log lines.
+func newLoggedServer(t *testing.T, fb core.Backend) (http.Handler, *bytes.Buffer) {
+	t.Helper()
+	cfg := config.Config{
+		BindAddr:       "127.0.0.1:0",
+		Tokens:         [][]byte{[]byte("good-token")},
+		Backend:        "fake",
+		MaxConcurrent:  2,
+		RequestTimeout: 5 * time.Second,
+	}
+	buf := &bytes.Buffer{}
+	h, err := New(cfg, fb, WithLogger(slog.New(slog.NewTextHandler(buf, nil))))
+	if err != nil {
+		t.Fatalf("server.New: %v", err)
+	}
+	return h, buf
+}
+
+func TestMaxTokensWarningLoggedOncePerProcess(t *testing.T) {
+	// The fake backend does not enforce max_tokens; the gap must be logged,
+	// but only once — the Anthropic wire makes max_tokens mandatory, so a
+	// per-request warning would flood the log.
+	h, buf := newLoggedServer(t, &fakeBackend{}) // MaxTokens: false
+	for i := 0; i < 2; i++ {
+		req := httptest.NewRequest("POST", "/v1/messages", strings.NewReader(messagesBody))
+		req.Header.Set("x-api-key", "good-token")
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("request %d: status = %d, body: %s", i, rec.Code, rec.Body.String())
+		}
+	}
+	if n := strings.Count(buf.String(), "not enforced"); n != 1 {
+		t.Fatalf("max_tokens warning logged %d times across two requests, want exactly 1; log:\n%s", n, buf.String())
+	}
+}
+
+func TestNoMaxTokensWarningWhenBackendEnforcesIt(t *testing.T) {
+	h, buf := newLoggedServer(t, &fakeBackend{maxTokens: true})
+	req := httptest.NewRequest("POST", "/v1/messages", strings.NewReader(messagesBody))
+	req.Header.Set("x-api-key", "good-token")
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body: %s", rec.Code, rec.Body.String())
+	}
+	if strings.Contains(buf.String(), "not enforced") {
+		t.Fatalf("no warning expected when the backend enforces max_tokens; log:\n%s", buf.String())
 	}
 }
 

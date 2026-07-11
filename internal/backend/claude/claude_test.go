@@ -446,6 +446,9 @@ func TestRegisteredInCore(t *testing.T) {
 	if caps.ClientTools {
 		t.Error("the claude CLI cannot execute client-defined tools; ClientTools must be false")
 	}
+	if caps.MaxTokens {
+		t.Error("the claude CLI has no max-tokens flag; MaxTokens must be false")
+	}
 }
 
 func TestParseStreamJSONLine(t *testing.T) {

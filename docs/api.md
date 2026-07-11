@@ -35,6 +35,11 @@ Request body (v1 supports text content only):
   turns). `thinking` blocks echoed back by clients are dropped silently.
   `image` and other block types are rejected with 400.
 - Roles are limited to `user` and `assistant`.
+- `max_tokens` is accepted for wire compatibility (the Anthropic format makes
+  it mandatory) but **not enforced** by the claude backend — the CLI has no
+  flag to cap output tokens, so responses may exceed it. The relay logs a
+  one-time warning when a request carries `max_tokens` on a backend that
+  cannot enforce it.
 - `tools` and `tool_choice` are decoded, but serving them requires a backend
   that supports client-defined tools — see "Client-defined tools" below.
 
@@ -76,6 +81,8 @@ their backend; classic chat clients are unaffected.
 ```
 
 `system` / `developer` messages map onto the backend system prompt.
+`max_tokens` is optional here and carries the same limitation as on
+`/v1/messages`: accepted, but not enforced by the claude backend.
 Streaming returns `chat.completion.chunk` SSE frames terminated by
 `data: [DONE]`; non-streaming returns a `chat.completion` object with
 `usage`.

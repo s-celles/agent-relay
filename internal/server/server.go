@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"net/http"
 	"strings"
+	"sync"
 
 	"github.com/s-celles/agent-relay/internal/api/anthropic"
 	"github.com/s-celles/agent-relay/internal/api/openai"
@@ -30,6 +31,10 @@ type server struct {
 	agentic       core.AgenticConfig
 	agenticTokens [][]byte
 	caps          core.Capabilities
+	// maxTokensWarn gates the max_tokens-not-enforced warning to once per
+	// process: the Anthropic wire makes max_tokens mandatory, so warning on
+	// every request would flood the log.
+	maxTokensWarn sync.Once
 }
 
 // Option customizes the server (currently: logger injection).
@@ -114,6 +119,21 @@ func (s *server) denyAgentic(w http.ResponseWriter, r *http.Request, reason stri
 	)
 }
 
+// noteMaxTokens surfaces the enforcement gap when a request carries
+// max_tokens but the backend cannot honor it (REQ: honest max_tokens). The
+// request is still served — rejecting would break every Anthropic-wire
+// client, since that format makes max_tokens mandatory — but the operator is
+// warned once so oversized responses are no surprise.
+func (s *server) noteMaxTokens(req core.InferRequest) {
+	if req.MaxTokens <= 0 || s.caps.MaxTokens {
+		return
+	}
+	s.maxTokensWarn.Do(func() {
+		s.logger.Warn("max_tokens is accepted for wire compatibility but not enforced by this backend; responses may exceed it",
+			"backend", s.dispatcher.Backend.Name())
+	})
+}
+
 // authorizeAgentic decides whether this request may run agentically
 // (REQ-EXEC-06). It returns (agentic, ok); when ok is false a 403 has
 // already been written and nothing must be dispatched. Every authorized
@@ -163,6 +183,7 @@ func (s *server) handleMessages(w http.ResponseWriter, r *http.Request) {
 	if !s.checkTools(w, req, anthropic.WriteError) {
 		return
 	}
+	s.noteMaxTokens(req)
 	agentic, ok := s.authorizeAgentic(w, r, anthropic.WriteError)
 	if !ok {
 		return
@@ -189,6 +210,7 @@ func (s *server) handleChat(w http.ResponseWriter, r *http.Request) {
 	if !s.checkTools(w, req, openai.WriteError) {
 		return
 	}
+	s.noteMaxTokens(req)
 	agentic, ok := s.authorizeAgentic(w, r, openai.WriteError)
 	if !ok {
 		return

@@ -121,7 +121,11 @@ type Capabilities struct {
 	// definitions and stop the turn on a tool_use for the caller to execute.
 	// The claude CLI backend cannot (the CLI runs its own agent loop).
 	ClientTools bool
-	Models      []string
+	// MaxTokens is true when the backend enforces InferRequest.MaxTokens.
+	// The claude CLI backend cannot (the CLI has no such flag), so the wire
+	// value is accepted for compatibility but responses may exceed it.
+	MaxTokens bool
+	Models    []string
 }
 
 // Backend is implemented once per agent CLI/SDK.
