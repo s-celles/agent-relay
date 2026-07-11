@@ -20,3 +20,7 @@
 # Deployment
 !Dockerfile
 !docker-compose.yml
+
+# Documentation site & CI
+!mkdocs.yml
+!.github/**

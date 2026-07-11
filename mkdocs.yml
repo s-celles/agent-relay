@@ -1,0 +1,41 @@
+site_name: agent-relay
+site_description: Self-hosted authenticating inference relay for agent CLIs
+site_url: https://s-celles.github.io/agent-relay/
+repo_url: https://github.com/s-celles/agent-relay
+repo_name: s-celles/agent-relay
+edit_uri: edit/main/docs/
+
+theme:
+  name: material
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: teal
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: teal
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+  features:
+    - navigation.sections
+    - navigation.top
+    - content.code.copy
+
+nav:
+  - Home: index.md
+  - Architecture: architecture.md
+  - Execution modes: execution-modes.md
+  - Configuration: configuration.md
+  - HTTP API: api.md
+  - Deployment: deployment.md
+  - Testing: testing.md
+
+markdown_extensions:
+  - admonition
+  - tables
+  - pymdownx.highlight
+  - pymdownx.superfences
