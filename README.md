@@ -53,6 +53,25 @@ go vet ./...
 Versioning follows [Semantic Versioning](https://semver.org/); notable changes
 are tracked in [CHANGELOG.md](CHANGELOG.md).
 
+## Disclaimer — terms of service
+
+This is an independent, self-hosted tool. It is **not affiliated with,
+endorsed by, or supported by Anthropic** or any other model provider.
+
+- Requests relayed to the `claude` CLI are subject to the terms that govern
+  your Anthropic account — the Consumer or Commercial Terms of Service and
+  the Usage Policy — exactly as if you had run the CLI yourself.
+- Consumer subscriptions (Pro/Max) are **personal**. This relay is designed
+  for your own scripts and devices on a private network (e.g. a Tailnet).
+  Do not expose it to third parties, share access to your account through
+  it, or use it to resell access. If several people or a service need
+  access, use an API key under commercial terms instead.
+- Providers may restrict automated or programmatic use of consumer
+  subscriptions; review the current terms before deploying. Violations can
+  lead to rate limiting, suspension, or termination of your account.
+- You are solely responsible for how you deploy and use this software. It is
+  provided under the AGPL **without any warranty** (see [LICENSE](LICENSE)).
+
 ## AI usage disclosure
 
 Portions of this project (code, tests, and documentation) were developed with

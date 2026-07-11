@@ -1,5 +1,10 @@
 # Deployment
 
+> **Terms of service**: relayed requests run under your Anthropic account's
+> terms. Consumer subscriptions are personal — deploy the relay for your own
+> use on a private network only, and never share or resell access to your
+> account through it. See the [disclaimer in the README](../README.md#disclaimer--terms-of-service).
+
 The runtime image is **not** just the Go binary: the Claude backend spawns
 the `claude` CLI, so the image bundles the CLI (and its Node runtime), and
 the host's subscription auth is provided via a mounted volume.

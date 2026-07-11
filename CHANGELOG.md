@@ -10,6 +10,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - AGPL-3.0-or-later license.
+- Terms-of-service disclaimer in the README and deployment docs (unofficial
+  tool; personal-use scope for consumer subscriptions).
 
 ### Fixed
 
