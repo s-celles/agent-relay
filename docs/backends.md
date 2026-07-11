@@ -10,7 +10,7 @@ backend touched neither the wire adapters nor the core.
 | What it is | the `claude` CLI, one supervised subprocess per request | a local [Ollama](https://ollama.com) server over HTTP |
 | Cost | your Anthropic subscription | free (runs on your machine) |
 | Streaming | ✅ | ✅ |
-| Client-defined tools | ✅ via the [MCP bridge](api.md#client-defined-tools) | ✅ natively — **but only on models that support it** (`qwen3.5` yes, `llama3` no) |
+| Client-defined tools | ✅ via the [MCP bridge](api.md#client-defined-tools) | ✅ natively — **but only on some models**, see below |
 | `max_tokens` | ❌ not enforced (no CLI flag) | ✅ enforced (`num_predict`) |
 | `temperature` / `top_p` / `top_k` / stop | ❌ dropped (signaled) | ✅ honored |
 | Images / PDFs | ✅ via the [attachment bridge](api.md#attachments-images-and-pdfs) | ✅ natively (base64 images) |
@@ -19,7 +19,47 @@ backend touched neither the wire adapters nor the core.
 
 Capabilities are resolved **per request**, from the backend that will
 actually serve it: ask `haiku` for `max_tokens` and you get the
-not-enforced warning; ask `phi3` and it is enforced.
+not-enforced warning; ask a local model and it is enforced.
+
+## Ollama and client tools: the `tools` badge is not enough
+
+This matters the moment you point an **agent client** (OpenCode, LangChain…) at
+a local model: an agent sends its toolset on *every* request, even a plain
+"hello". So a model without tool calling fails outright — Ollama answers
+*"`llama3` does not support tools"* and nothing works, tools or not.
+
+Worse, Ollama's `tools` capability badge is **necessary but not sufficient**.
+A model can carry it and still write the call as *text* (a markdown JSON block)
+instead of emitting a structured `tool_call` that Ollama parses — in which case
+the client never runs it, and the turn just ends. Whether it works depends on
+the model *and* its Ollama template, and the only way to know is to try.
+
+Measured on an Apple M4 / 16 GB, with an OpenCode-sized request (~5k characters
+of system prompt, four tools):
+
+| model | time | real `tool_use`? |
+|---|---|---|
+| `granite4.1:3b` | ~3 s | ✅ |
+| `llama3.1:8b` | ~10 s | ✅ |
+| `qwen3.5` (9.7B, *thinking*) | 13–45 s | ✅ but slow |
+| `qwen2.5-coder` (3b, 7b) | 3–5 s | ❌ **writes the call as text** |
+| `phi3`, `llama3`, `dolphin-mixtral` | — | ❌ no tool support at all |
+
+Check a model before relying on it:
+
+```sh
+ollama show <model> | grep -i tools      # necessary
+# then actually send it a tool and see whether a tool_call comes back
+```
+
+!!! note "Thinking models"
+
+    The backend sends `think: false`. A thinking model (qwen3.x) otherwise puts
+    its reasoning in Ollama's `thinking` field and the answer in `content` only
+    once it is done — and since the backend surfaces `content` alone, the caller
+    would get an empty answer, or a silent gap long enough for an agent client to
+    cancel. See the [roadmap](https://github.com/s-celles/agent-relay/blob/main/ROADMAP.md)
+    for surfacing it properly instead.
 
 ## Routing by model name
 
@@ -29,20 +69,20 @@ The relay decides which backend that means:
 ```mermaid
 flowchart LR
     req(["model: ?"]) --> route{"in<br/>RELAY_MODEL_ROUTES?"}
-    route -- "llama3, phi3…" --> ollama["ollama backend<br/>(local, free)"]
+    route -- "granite4.1:3b…" --> ollama["ollama backend<br/>(local, free)"]
     route -- "unrouted (haiku, sonnet…)" --> def["RELAY_BACKEND<br/>= claude (subscription)"]
 ```
 
 ```sh
 RELAY_BACKEND=claude \
-RELAY_MODEL_ROUTES="llama3=ollama,phi3=ollama,qwen3.5=ollama" \
+RELAY_MODEL_ROUTES="granite4.1:3b=ollama,llama3.1:8b=ollama" \
 ./relay
 ```
 
 ```sh
 # same endpoint, same client, same credential — different engine
 curl … -d '{"model":"haiku",  …}'   # → claude CLI, your subscription
-curl … -d '{"model":"llama3", …}'   # → local Ollama, free
+curl … -d '{"model":"granite4.1:3b", …}'  # → local Ollama, free
 ```
 
 Anything without a route goes to `RELAY_BACKEND`. A route naming a backend
@@ -58,7 +98,7 @@ behaves, and as other relays (LiteLLM, OpenRouter) do it.
 - **Spend where it matters.** Send classification, extraction, or draft work
   to a local model for nothing, and keep the subscription for what needs it.
   The cost accounting shows it plainly: a `haiku` request logs
-  `cost_usd=0.0237`, a `phi3` request logs `cost_usd=0`.
+  `cost_usd=0.0237`, a local one logs `cost_usd=0`.
 - **Get the API features the CLI lacks.** Sampling control and enforced
   `max_tokens` work on the Ollama backend — route a model there when a
   workload actually needs them.

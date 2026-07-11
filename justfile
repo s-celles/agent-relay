@@ -43,13 +43,20 @@ run: build _tokens
     RELAY_TOKENS="$(cat {{token_file}})" ./relay
 
 # Run with model-name routing to a local Ollama, alongside the claude default.
-# Unrouted names (haiku, sonnet, opus…) still go to your subscription; the
-# listed names go to Ollama. Requires `ollama serve` with those models pulled.
-# Note: thinking models (qwen3.x) answer empty here — the backend surfaces only
-# Ollama's `content`, not `thinking`. Use phi3 / llama3 / dolphin-mixtral.
+# Unrouted names (haiku, sonnet, opus…) still go to your subscription.
+#
+# Only tool-capable models are routed: an agent client sends its toolset on
+# every request, so a model without tool calling fails even a plain "hello".
+# And the `tools` badge is necessary but not sufficient — qwen2.5-coder carries
+# it yet writes the call as *text* instead of emitting a structured tool_call,
+# so the client never runs it. These three were measured to emit real calls:
+#
+#   granite4.1:3b  ~3s   ← fastest; the one to use
+#   llama3.1:8b    ~10s
+#   qwen3.5        ~13s+ (thinking; slowest)
 run-hybrid: build _tokens
     RELAY_TOKENS="$(cat {{token_file}})" \
-    RELAY_MODEL_ROUTES="qwen3.5=ollama,dolphin-mixtral:8x7b=ollama,phi3=ollama,llama3=ollama" \
+    RELAY_MODEL_ROUTES="granite4.1:3b=ollama,llama3.1:8b=ollama,qwen3.5=ollama" \
     ./relay
 
 # Run with agentic execution enabled (file edits only: acceptEdits).
