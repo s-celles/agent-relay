@@ -164,6 +164,38 @@ echo '{"type":"result","subtype":"success","result":"","usage":{"input_tokens":1
 	}
 }
 
+func TestInferDeniesAnthropicCredentialsByDefault(t *testing.T) {
+	// The whole point of the relay is to use the subscription. An
+	// ANTHROPIC_API_KEY (or ANTHROPIC_AUTH_TOKEN) inherited from the operator's
+	// shell would silently route the CLI to that credential instead — and if it
+	// is stale, every request fails with "Invalid API key". Deny both by
+	// default, without needing RELAY_ENV_DENY.
+	t.Setenv("ANTHROPIC_API_KEY", "sk-ant-should-not-leak")
+	t.Setenv("ANTHROPIC_AUTH_TOKEN", "should-not-leak")
+
+	script := `
+cat > /dev/null
+if [ -n "$ANTHROPIC_API_KEY" ] || [ -n "$ANTHROPIC_AUTH_TOKEN" ]; then
+  echo '{"type":"stream_event","event":{"type":"content_block_delta","delta":{"type":"text_delta","text":"leaked"}}}'
+else
+  echo '{"type":"stream_event","event":{"type":"content_block_delta","delta":{"type":"text_delta","text":"clean"}}}'
+fi
+echo '{"type":"result","subtype":"success","result":"","usage":{"input_tokens":1,"output_tokens":1}}'
+`
+	b := newTestBackend(t, core.BackendConfig{CLIPath: stubCLI(t, script)})
+	sink := &collectSink{}
+	if err := b.Infer(context.Background(), core.InferRequest{
+		Messages: []core.Message{core.NewTextMessage(core.RoleUser, "x")},
+	}, sink); err != nil {
+		t.Fatalf("Infer: %v", err)
+	}
+	for _, ev := range sink.events {
+		if ev.Kind == core.EventTextDelta && ev.Text != "clean" {
+			t.Fatalf("the CLI inherited an Anthropic credential; it must default to the subscription (got %q)", ev.Text)
+		}
+	}
+}
+
 func TestInferKillsProcessOnCancel(t *testing.T) {
 	// REQ-PROC-04: cancellation must terminate the subprocess promptly.
 	script := `

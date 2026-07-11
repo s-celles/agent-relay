@@ -51,6 +51,15 @@ caller on a non-loopback interface reaches a backend.
 
 ## Environment sanitization
 
-The subprocess never sees `ANTHROPIC_BASE_URL`, `OPENAI_BASE_URL`, or
-`CLAUDECODE`, regardless of configuration. Add operator-specific secrets to
-`RELAY_ENV_DENY` to strip them as well.
+The subprocess never sees `ANTHROPIC_BASE_URL`, `OPENAI_BASE_URL`,
+`CLAUDECODE`, `ANTHROPIC_API_KEY`, or `ANTHROPIC_AUTH_TOKEN`, regardless of
+configuration. Add operator-specific secrets to `RELAY_ENV_DENY` to strip them
+as well.
+
+The two Anthropic credentials are denied on purpose: the relay exists to front
+your **subscription**, and an `ANTHROPIC_API_KEY` inherited from the operator's
+shell would silently route the CLI to that key instead — and a stale one fails
+every request with *"Invalid API key"*. Denying it by default means the relay
+uses the subscription without the operator having to remember anything. If you
+genuinely want an API-key path, you do not need this relay: call the API
+directly.

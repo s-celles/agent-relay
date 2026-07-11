@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **The claude backend now denies `ANTHROPIC_API_KEY` and `ANTHROPIC_AUTH_TOKEN`
+  to the subprocess by default.** The relay exists to front your subscription;
+  an API key inherited from the operator's shell would silently route the CLI to
+  that credential instead, and a stale one fails every request with *"Invalid
+  API key"* — an easy trap, since commenting the export out of a shell profile
+  does not clear it from an already-running VS Code session. Both are now in the
+  baseline deny list (alongside `ANTHROPIC_BASE_URL`, `OPENAI_BASE_URL`,
+  `CLAUDECODE`), so the subscription is used without the operator having to set
+  `RELAY_ENV_DENY`. An operator who genuinely wants an API-key path does not
+  need this relay.
+
 ## [0.9.0] - 2026-07-11
 
 ### Changed
