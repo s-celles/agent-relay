@@ -11,7 +11,8 @@ authoritative design; `docs/` is the user-facing documentation.
 | While iterating | `just precommit` (gofmt + vet + tests, fast) |
 | Single package | `go test ./internal/server/` |
 | Single test | `go test ./internal/server/ -run TestName` |
-| Before ANY commit | `just check` (adds race detector + govulncheck — same gates as CI) |
+| Coverage view | `just coverage` |
+| Before ANY commit | `just check` (adds golangci-lint + race detector + govulncheck — same gates as CI) |
 
 CI runs exactly the `just check` gate set plus an OpenAPI validation of
 `docs/openapi.json`. If `just check` passes locally, CI should pass.

@@ -209,7 +209,7 @@ func (b *Backend) Infer(ctx context.Context, req core.InferRequest, sink core.Ev
 	if err != nil {
 		return fmt.Errorf("call ollama: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if err := sink.Emit(ctx, core.Event{Kind: core.EventMessageStart}); err != nil {
 		return err

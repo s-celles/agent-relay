@@ -14,6 +14,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   loop (`just check` remains the full pre-commit gate), and `opencode.json`
   permission rules denying token-file access, force-pushes, and
   token-spending recipes without confirmation.
+- **golangci-lint gate** (`.golangci.yml`, `just lint`, CI step): staticcheck,
+  errcheck, unused, and friends beyond `go vet`; errcheck is relaxed in test
+  files. `just coverage` surfaces per-package statement coverage.
+
+### Fixed
+
+- **Unchecked error returns** flagged by the new lint gate: best-effort
+  closes and cleanup paths across `backend/claude`, `backend/ollama`,
+  `outputs`, `server`, and `toolbridge` now discard errors explicitly; a dead
+  helper (`inputOrEmpty`) was removed.
+
+### Changed
+
+- **Test coverage** raised on `internal/obs` (26% → 96%: request-id
+  middleware, counters, snapshot handler) and `internal/api/openai`
+  (64% → 88%: streaming and collected tool calls, invalid-args degradation,
+  error surfaces).
 
 ## [0.9.1] - 2026-07-11
 

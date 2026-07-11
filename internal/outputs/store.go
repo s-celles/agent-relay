@@ -125,7 +125,7 @@ func (s *Store) Open(id, rel string) (*os.File, error) {
 	if err != nil {
 		return nil, ErrNotFound
 	}
-	defer root.Close()
+	defer func() { _ = root.Close() }()
 	// Root.Open refuses any path that escapes the root, including one that
 	// traverses a symlink partway.
 	f, err := root.Open(rel)
@@ -133,7 +133,7 @@ func (s *Store) Open(id, rel string) (*os.File, error) {
 		return nil, ErrNotFound
 	}
 	if info, err := f.Stat(); err != nil || info.IsDir() {
-		f.Close()
+		_ = f.Close()
 		return nil, ErrNotFound
 	}
 	return f, nil

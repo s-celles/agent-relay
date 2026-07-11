@@ -130,7 +130,7 @@ func (t *traceWriter) record(ev core.Event) {
 
 func (t *traceWriter) Close() {
 	if t != nil && t.f != nil {
-		t.f.Close()
+		_ = t.f.Close()
 	}
 }
 
@@ -442,7 +442,7 @@ func (s *server) handleOutputsDownload(w http.ResponseWriter, r *http.Request) {
 		anthropic.WriteError(w, http.StatusNotFound, "unknown outputs id or file")
 		return
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	w.Header().Set("Content-Type", "application/octet-stream")
 	_, _ = io.Copy(w, f)
 }

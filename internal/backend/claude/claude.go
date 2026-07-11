@@ -278,7 +278,7 @@ func (b *Backend) Infer(ctx context.Context, req core.InferRequest, sink core.Ev
 		if err != nil {
 			return fmt.Errorf("create ephemeral workdir: %w", err)
 		}
-		defer os.RemoveAll(dir)
+		defer func() { _ = os.RemoveAll(dir) }()
 		workdir = dir
 	}
 	if needFiles {
@@ -324,7 +324,7 @@ func (b *Backend) Infer(ctx context.Context, req core.InferRequest, sink core.Ev
 
 	// REQ-PROC-01: payload piped via stdin (avoids ARG_MAX).
 	go func() {
-		defer stdin.Close()
+		defer func() { _ = stdin.Close() }()
 		_, _ = io.WriteString(stdin, b.encodePrompt(req))
 	}()
 

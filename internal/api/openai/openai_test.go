@@ -285,3 +285,154 @@ func TestCollectSinkResponse(t *testing.T) {
 		t.Errorf("usage = %+v", resp.Usage)
 	}
 }
+
+var toolCallPath = []core.Event{
+	{Kind: core.EventMessageStart, Usage: &core.Usage{InputTokens: 3}},
+	{Kind: core.EventToolUseStart, ToolID: "call_1", ToolName: "get_weather"},
+	{Kind: core.EventToolUseDelta, Text: `{"city":`},
+	{Kind: core.EventToolUseDelta, Text: `"Paris"}`},
+	{Kind: core.EventToolUseStop},
+	{Kind: core.EventMessageStop, Usage: &core.Usage{InputTokens: 3, OutputTokens: 5}},
+}
+
+func TestStreamSinkToolCalls(t *testing.T) {
+	rec := httptest.NewRecorder()
+	sink := NewStreamSink(rec, "chatcmpl-test", "sonnet")
+	if sink.Started() {
+		t.Error("Started() = true before any event")
+	}
+	emitAll(t, sink, toolCallPath)
+	if !sink.Started() {
+		t.Error("Started() = false after emitting")
+	}
+
+	body := rec.Body.String()
+	for _, want := range []string{
+		`"id":"call_1"`,
+		`"name":"get_weather"`,
+		`"arguments":""`,
+		`"arguments":"{\"city\":"`,
+		`"finish_reason":"tool_calls"`,
+		"data: [DONE]",
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("SSE body missing %q\nbody:\n%s", want, body)
+		}
+	}
+}
+
+func TestStreamSinkToolDeltaWithoutStart(t *testing.T) {
+	// A stray arguments delta with no preceding tool_use start is dropped
+	// rather than emitted against a nonexistent index.
+	rec := httptest.NewRecorder()
+	sink := NewStreamSink(rec, "chatcmpl-test", "sonnet")
+	emitAll(t, sink, []core.Event{
+		{Kind: core.EventMessageStart},
+		{Kind: core.EventToolUseDelta, Text: `{"x":1}`},
+		{Kind: core.EventMessageStop},
+	})
+	if body := rec.Body.String(); strings.Contains(body, "tool_calls\":[{") {
+		t.Errorf("stray tool delta must not emit a tool_calls chunk:\n%s", body)
+	}
+}
+
+func TestCollectSinkToolCalls(t *testing.T) {
+	sink := NewCollectSink("chatcmpl-test", "sonnet")
+	emitAll(t, sink, toolCallPath)
+	if sink.Err() != nil {
+		t.Fatalf("Err() = %v, want nil", sink.Err())
+	}
+
+	rec := httptest.NewRecorder()
+	if err := sink.WriteResponse(rec); err != nil {
+		t.Fatalf("WriteResponse: %v", err)
+	}
+	var resp struct {
+		Choices []struct {
+			Message struct {
+				Content   *string `json:"content"`
+				ToolCalls []struct {
+					ID       string `json:"id"`
+					Type     string `json:"type"`
+					Function struct {
+						Name      string `json:"name"`
+						Arguments string `json:"arguments"`
+					} `json:"function"`
+				} `json:"tool_calls"`
+			} `json:"message"`
+			FinishReason string `json:"finish_reason"`
+		} `json:"choices"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("unmarshal response: %v\nbody: %s", err, rec.Body.String())
+	}
+	if len(resp.Choices) != 1 {
+		t.Fatalf("choices = %+v", resp.Choices)
+	}
+	ch := resp.Choices[0]
+	if ch.FinishReason != "tool_calls" {
+		t.Errorf("finish_reason = %q, want tool_calls", ch.FinishReason)
+	}
+	if ch.Message.Content != nil {
+		t.Errorf("content = %v, want null for a tool-only turn", *ch.Message.Content)
+	}
+	if len(ch.Message.ToolCalls) != 1 {
+		t.Fatalf("tool_calls = %+v", ch.Message.ToolCalls)
+	}
+	tc := ch.Message.ToolCalls[0]
+	if tc.ID != "call_1" || tc.Type != "function" || tc.Function.Name != "get_weather" ||
+		tc.Function.Arguments != `{"city":"Paris"}` {
+		t.Errorf("tool call = %+v", tc)
+	}
+}
+
+func TestCollectSinkInvalidToolArgs(t *testing.T) {
+	// Truncated/invalid accumulated arguments degrade to "{}" rather than
+	// emitting broken JSON on the wire.
+	sink := NewCollectSink("chatcmpl-test", "sonnet")
+	emitAll(t, sink, []core.Event{
+		{Kind: core.EventToolUseStart, ToolID: "call_1", ToolName: "get_weather"},
+		{Kind: core.EventToolUseDelta, Text: `{"city":`},
+		{Kind: core.EventMessageStop},
+	})
+	rec := httptest.NewRecorder()
+	if err := sink.WriteResponse(rec); err != nil {
+		t.Fatalf("WriteResponse: %v", err)
+	}
+	if body := rec.Body.String(); !strings.Contains(body, `"arguments":"{}"`) {
+		t.Errorf("invalid args must degrade to {}:\n%s", body)
+	}
+}
+
+func TestCollectSinkErr(t *testing.T) {
+	sink := NewCollectSink("chatcmpl-test", "sonnet")
+	emitAll(t, sink, []core.Event{
+		{Kind: core.EventError, Err: errors.New("backend exploded")},
+	})
+	if err := sink.Err(); err == nil || !strings.Contains(err.Error(), "backend exploded") {
+		t.Errorf("Err() = %v, want backend exploded", err)
+	}
+}
+
+func TestWriteError(t *testing.T) {
+	rec := httptest.NewRecorder()
+	WriteError(rec, 429, "slow down")
+	if rec.Code != 429 {
+		t.Errorf("status = %d, want 429", rec.Code)
+	}
+	if ct := rec.Header().Get("Content-Type"); ct != "application/json" {
+		t.Errorf("Content-Type = %q, want application/json", ct)
+	}
+	var got struct {
+		Error struct {
+			Message string `json:"message"`
+			Type    string `json:"type"`
+		} `json:"error"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("unmarshal: %v (body %s)", err, rec.Body.String())
+	}
+	if got.Error.Message != "slow down" || got.Error.Type != "api_error" {
+		t.Errorf("error = %+v", got.Error)
+	}
+}

@@ -36,6 +36,12 @@ jobs:
       - name: go vet
         run: go vet ./...
 
+      # Static analysis beyond vet (staticcheck, errcheck, …) — .golangci.yml
+      # is the config; `just lint` runs the same thing locally.
+      - name: golangci-lint
+        if: matrix.os == 'ubuntu-latest'
+        uses: golangci/golangci-lint-action@v8
+
       # The suite spawns a stub `claude` script, never the real CLI: no
       # credentials are needed and no tokens are ever spent. It also holds
       # docs/openapi.json against the routes the server actually registers.

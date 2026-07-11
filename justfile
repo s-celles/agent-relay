@@ -73,11 +73,12 @@ opencode: _tokens
 
 # --- quality gates (what CI runs) ----------------------------------------
 
-# Format, vet, race-test, and vuln-scan — the full CI gate set.
-check: fmt-check vet test-race vuln
+# Format, vet, lint, race-test, and vuln-scan — the full CI gate set.
+check: fmt-check vet lint test-race vuln
 
 # Fast inner-loop gate while iterating: format, vet, plain tests.
-# Run `just check` before committing — it adds the race detector and vuln scan.
+# Run `just check` before committing — it adds lint, the race detector and
+# the vuln scan.
 precommit: fmt vet test
 
 fmt:
@@ -95,6 +96,14 @@ test:
 
 test-race:
     go test -race ./...
+
+# Static analysis beyond vet (staticcheck, errcheck, …) — see .golangci.yml.
+lint:
+    go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@latest run ./...
+
+# Per-package statement coverage, so gaps stay visible in the feedback loop.
+coverage:
+    go test -cover ./...
 
 # Fail on any reachable known vulnerability (stdlib or the one dependency).
 vuln:

@@ -30,3 +30,4 @@
 # Documentation site & CI
 !mkdocs.yml
 !.github/**
+!.golangci.yml

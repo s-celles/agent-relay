@@ -1,0 +1,12 @@
+version: "2"
+
+# Standard linter set (errcheck, govet, ineffassign, staticcheck, unused).
+# errcheck is relaxed in tests: unchecked errors there are deliberate
+# shorthand, and a failure surfaces through the assertion that follows.
+linters:
+  default: standard
+  exclusions:
+    rules:
+      - path: _test\.go
+        linters:
+          - errcheck

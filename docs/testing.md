@@ -27,17 +27,30 @@ logged-in `claude` CLI.
 ## Running
 
 ```sh
+just precommit   # fast inner loop: gofmt + vet + tests
+just check       # full pre-commit gate: adds lint, race detector, govulncheck
+just coverage    # per-package statement coverage
+```
+
+Or the underlying commands directly:
+
+```sh
 go test ./...
 go test -race ./...   # required before committing
 go vet ./...
 gofmt -l .            # must print nothing
+go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@latest run ./...
 ```
+
+Static analysis beyond `go vet` (staticcheck, errcheck, unused, …) is
+configured in `.golangci.yml`; `errcheck` is relaxed in test files, where an
+unchecked error is deliberate shorthand.
 
 ## Continuous integration
 
-`.github/workflows/ci.yml` runs the same four gates (gofmt, vet, race tests,
-build) on every push and pull request, on Linux and macOS, plus a validation of
-`docs/openapi.json` as a real OpenAPI document. Because the suite drives a stub
+`.github/workflows/ci.yml` runs the same gates (gofmt, vet, golangci-lint,
+race tests, build, govulncheck) on every push and pull request, on Linux and
+macOS, plus a validation of `docs/openapi.json` as a real OpenAPI document. Because the suite drives a stub
 `claude` script rather than the real CLI, CI needs no credentials and spends no
 tokens.
 

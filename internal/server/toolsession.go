@@ -2,7 +2,6 @@ package server
 
 import (
 	"context"
-	"encoding/json"
 	"sync"
 	"time"
 
@@ -177,11 +176,4 @@ func toolResults(req core.InferRequest) []core.Block {
 		}
 	}
 	return out
-}
-
-func inputOrEmpty(raw json.RawMessage) json.RawMessage {
-	if len(raw) == 0 || !json.Valid(raw) {
-		return json.RawMessage(`{}`)
-	}
-	return raw
 }

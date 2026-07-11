@@ -168,7 +168,7 @@ func New(callWait time.Duration) (*Bridge, error) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /mcp/{session}", b.handleMCP)
 	b.srv = &http.Server{Handler: mux}
-	go b.srv.Serve(ln)
+	go func() { _ = b.srv.Serve(ln) }()
 	return b, nil
 }
 
@@ -180,7 +180,7 @@ func (b *Bridge) Close() {
 	for _, s := range sessions {
 		s.close()
 	}
-	b.srv.Close()
+	_ = b.srv.Close()
 }
 
 // NewSession registers the caller's tools and returns the session the CLI

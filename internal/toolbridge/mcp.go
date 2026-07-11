@@ -125,7 +125,7 @@ func writeResult(w http.ResponseWriter, id json.RawMessage, result any) {
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
-	w.Write(body)
+	_, _ = w.Write(body)
 }
 
 func writeToolResult(w http.ResponseWriter, id json.RawMessage, text string, isError bool) {
