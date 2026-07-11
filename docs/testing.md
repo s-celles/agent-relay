@@ -32,3 +32,10 @@ go test -race ./...   # required before committing
 go vet ./...
 gofmt -l .            # must print nothing
 ```
+
+## Continuous integration
+
+`.github/workflows/ci.yml` runs the same four gates (gofmt, vet, race tests,
+build) on every push and pull request, on Linux and macOS. Because the suite
+drives a stub `claude` script rather than the real CLI, CI needs no
+credentials and spends no tokens.

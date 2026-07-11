@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- CI workflow (`.github/workflows/ci.yml`): gofmt, `go vet`, `go test -race`,
+  and build, on Linux and macOS, for every push and pull request. No
+  credentials needed — the suite drives a stub CLI and spends no tokens.
 - `SECURITY.md`: security policy and threat model — assets, trust
   boundaries, what the relay does and does not defend against, why a
   TLS-terminating reverse proxy is mandatory off loopback, the security

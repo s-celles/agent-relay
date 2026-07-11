@@ -1,5 +1,10 @@
 # agent-relay
 
+[![ci](https://github.com/s-celles/agent-relay/actions/workflows/ci.yml/badge.svg)](https://github.com/s-celles/agent-relay/actions/workflows/ci.yml)
+[![docs](https://github.com/s-celles/agent-relay/actions/workflows/docs.yml/badge.svg)](https://s-celles.github.io/agent-relay/)
+[![Go Reference](https://pkg.go.dev/badge/github.com/s-celles/agent-relay.svg)](https://pkg.go.dev/github.com/s-celles/agent-relay)
+[![License: AGPL v3](https://img.shields.io/badge/License-AGPL_v3-blue.svg)](LICENSE)
+
 A self-hosted, authenticating **inference relay** that fronts agent CLIs
 (v1: the `claude` CLI) behind standard HTTP APIs:
 
