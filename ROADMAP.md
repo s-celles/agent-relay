@@ -36,7 +36,10 @@ What is known to be missing or deferred, relative to the design document
 ## Later (v0.2+ candidates)
 
 - [ ] **Structured content.** Image and tool-use content blocks are
-  rejected today (v1 is text-only by design, spec §2).
+  rejected today (v1 is text-only by design, spec §2). This is the blocker
+  for agentic clients: the Claude Agent SDK and Claude Code cannot use the
+  relay as their backend (via `ANTHROPIC_BASE_URL`) until `tool_use` /
+  `tool_result` blocks round-trip through the neutral model.
 - [ ] **Second backend (Gemini or Codex).** The registry seam exists
   (REQ-BK-03) but is unexercised; a second adapter would prove it.
 - [ ] **Model-map routing across backends.** When a second backend lands,
