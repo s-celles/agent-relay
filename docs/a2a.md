@@ -175,6 +175,14 @@ curl -s -X POST … -d '{"jsonrpc":"2.0","id":3,"method":"CancelTask","params":{
   A2A needs a declared protocol extension, which is not written.
 - **Multi-tenancy** (`tenant`) and the extended agent card.
 
+## Verifying it against something we did not write
+
+The Go tests here were written against the same reading of the specification as
+the Go code — so they cannot catch a misreading of it. The
+[A2A interop check](interop.md) closes that gap: it drives the relay with the
+official **Python** SDK, handed nothing but a base URL. It is run by hand, not
+in CI, because it spends real tokens.
+
 ## The one dependency
 
 The protocol machinery — JSON-RPC binding, SSE, task store, agent card, the task

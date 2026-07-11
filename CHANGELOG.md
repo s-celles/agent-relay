@@ -9,6 +9,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **A2A interoperability check** (`docs/interop/a2a_interop.py`, documented in
+  `docs/interop.md`): drives the relay with the **official Python A2A SDK** —
+  discovery through the Agent Card, a chat task, `GetTask`, context continuity,
+  and an agentic task whose file comes back as a `url` artifact and is fetched
+  out of band.
+
+  It exists to break a circularity: the Go tests were written by the same hand
+  as the Go server, against the same reading of the specification, so they
+  cannot catch a *misreading* of the wire — they agree with it. Two independent
+  implementations agreeing is a fact about the wire; our own tests agreeing with
+  our own code is not.
+
+  **Deliberately not in CI.** It needs a live subscription and spends real
+  tokens, and the rest of the suite is built so that no test ever spends one —
+  that invariant is worth more than automating this. Run it by hand before
+  tagging a release that touched `internal/api/a2a`, or after bumping `a2a-go`.
+
 - **OpenAPI 3.1 description** (`docs/openapi.json`), rendered with Swagger UI at
   [/openapi/](https://s-celles.github.io/agent-relay/openapi/). Deliberately
   **scoped to what the relay adds**, not to what it proxies: the bodies of

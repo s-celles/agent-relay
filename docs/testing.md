@@ -36,6 +36,20 @@ gofmt -l .            # must print nothing
 ## Continuous integration
 
 `.github/workflows/ci.yml` runs the same four gates (gofmt, vet, race tests,
-build) on every push and pull request, on Linux and macOS. Because the suite
-drives a stub `claude` script rather than the real CLI, CI needs no
-credentials and spends no tokens.
+build) on every push and pull request, on Linux and macOS, plus a validation of
+`docs/openapi.json` as a real OpenAPI document. Because the suite drives a stub
+`claude` script rather than the real CLI, CI needs no credentials and spends no
+tokens.
+
+## The one check that is *not* automated
+
+Everything above is closed-loop: the Go tests were written against the same
+reading of the specifications as the Go code, so they cannot catch a
+misreading of the wire — they would simply agree with it.
+
+The [A2A interoperability check](interop.md) breaks that circularity by driving
+the relay with the official **Python** A2A SDK, which knows nothing about this
+project. It is deliberately kept out of CI: it needs a live subscription and
+spends real tokens, and the no-cost invariant above is worth more than the
+convenience of automating it. Run it by hand before tagging a release that
+touched `internal/api/a2a`.

@@ -38,6 +38,7 @@ nav:
   - API vs relay limitations: limitations.md
   - Deployment: deployment.md
   - Testing: testing.md
+  - A2A interop check: interop.md
 
 markdown_extensions:
   - admonition
