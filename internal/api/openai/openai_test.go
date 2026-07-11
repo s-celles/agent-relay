@@ -73,6 +73,15 @@ func TestDecodeRequest(t *testing.T) {
 				}},
 			},
 		},
+		{
+			name: "max_completion_tokens preferred over legacy max_tokens",
+			body: `{"model":"m","max_tokens":10,"max_completion_tokens":42,"messages":[{"role":"user","content":"q"}]}`,
+			want: core.InferRequest{
+				Model:     "m",
+				MaxTokens: 42,
+				Messages:  []core.Message{core.NewTextMessage(core.RoleUser, "q")},
+			},
+		},
 		{name: "invalid role", body: `{"model":"m","messages":[{"role":"function","content":"x"}]}`, wantErr: true},
 		{name: "no conversation messages", body: `{"model":"m","messages":[{"role":"system","content":"x"}]}`, wantErr: true},
 		{name: "malformed json", body: `[`, wantErr: true},

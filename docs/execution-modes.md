@@ -81,7 +81,9 @@ can be correlated with responses and reviewed after the fact. Rejected
 agentic attempts (agentic disabled, or an invalid `X-Agentic-Authorization`
 credential) are logged at level Warn (`agentic request denied`) with the
 same correlation fields plus a `reason`, in addition to incrementing the
-`agentic_denied` metric.
+`agentic_denied` metric. One caveat: the id echoes the caller-suppliable
+`X-Request-Id` request header (generated server-side only when absent), so
+treat it as a correlation aid, not a tamper-proof identifier.
 
 **What agentic mode does *not* provide**: a sandbox. The subprocess runs as
 the relay's OS user, with that user's privileges, network access, and home

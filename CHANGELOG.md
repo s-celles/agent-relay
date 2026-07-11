@@ -26,6 +26,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `ROADMAP.md`: known gaps and deferred features relative to the design
   document.
 
+- Agentic audit trail: every request authorized to run agentically is logged
+  at Info with its `X-Request-Id` and path; rejected agentic attempts are
+  logged at Warn with a reason, alongside the `agentic_denied` metric.
+- Honest `max_tokens`: backends declare whether they enforce it
+  (`Capabilities.MaxTokens`; the claude CLI cannot), the relay logs a
+  one-time warning when clients set it on a non-enforcing backend, and the
+  OpenAI endpoint now also decodes `max_completion_tokens`.
+
 ### Changed
 
 - Structured content support: the neutral model now carries content blocks

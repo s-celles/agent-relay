@@ -81,7 +81,8 @@ their backend; classic chat clients are unaffected.
 ```
 
 `system` / `developer` messages map onto the backend system prompt.
-`max_tokens` is optional here and carries the same limitation as on
+`max_tokens` and `max_completion_tokens` (the modern OpenAI parameter, which
+takes precedence) are optional here and carry the same limitation as on
 `/v1/messages`: accepted, but not enforced by the claude backend.
 Streaming returns `chat.completion.chunk` SSE frames terminated by
 `data: [DONE]`; non-streaming returns a `chat.completion` object with

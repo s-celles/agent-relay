@@ -38,11 +38,14 @@ type wireTool struct {
 }
 
 type chatRequest struct {
-	Model     string        `json:"model"`
-	Messages  []wireMessage `json:"messages"`
-	MaxTokens int           `json:"max_tokens"`
-	Stream    bool          `json:"stream"`
-	Tools     []wireTool    `json:"tools"`
+	Model    string        `json:"model"`
+	Messages []wireMessage `json:"messages"`
+	// MaxTokens is the legacy parameter; current OpenAI SDKs send
+	// max_completion_tokens instead, which takes precedence when set.
+	MaxTokens           int        `json:"max_tokens"`
+	MaxCompletionTokens int        `json:"max_completion_tokens"`
+	Stream              bool       `json:"stream"`
+	Tools               []wireTool `json:"tools"`
 }
 
 // DecodeRequest parses a POST /v1/chat/completions body into a
@@ -62,6 +65,9 @@ func DecodeRequest(r io.Reader) (core.InferRequest, error) {
 		Model:     wire.Model,
 		MaxTokens: wire.MaxTokens,
 		Stream:    wire.Stream,
+	}
+	if wire.MaxCompletionTokens > 0 {
+		req.MaxTokens = wire.MaxCompletionTokens
 	}
 	for _, t := range wire.Tools {
 		if t.Type != "function" {

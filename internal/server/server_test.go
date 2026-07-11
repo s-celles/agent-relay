@@ -340,9 +340,9 @@ func TestAgenticHeaderRejectedWhenAgenticDisabled(t *testing.T) {
 // Agentic audit trail: authorized agentic requests are logged at Info,
 // rejected agentic credentials at Warn, both correlated by X-Request-Id.
 
-// newAuditServer builds a server whose logger writes JSON lines to the
-// returned buffer, so tests can assert on structured log output.
-func newAuditServer(t *testing.T, fb core.Backend, mutate ...func(*config.Config)) (http.Handler, *bytes.Buffer) {
+// newLoggedServer is newTestServer with the server's slog output captured as
+// JSON lines, so tests can assert on structured log output.
+func newLoggedServer(t *testing.T, fb core.Backend, mutate ...func(*config.Config)) (http.Handler, *bytes.Buffer) {
 	t.Helper()
 	cfg := config.Config{
 		BindAddr:       "127.0.0.1:0",
@@ -389,7 +389,7 @@ func agenticPerRequest(c *config.Config) {
 
 func TestAgenticAuthorizedRequestIsAudited(t *testing.T) {
 	t.Run("per-request authz", func(t *testing.T) {
-		h, buf := newAuditServer(t, &fakeBackend{}, agenticPerRequest)
+		h, buf := newLoggedServer(t, &fakeBackend{}, agenticPerRequest)
 		rec := postMessages(t, h, map[string]string{"X-Agentic-Authorization": "Bearer agentic-secret"})
 		if rec.Code != http.StatusOK {
 			t.Fatalf("status = %d, body: %s", rec.Code, rec.Body.String())
@@ -412,7 +412,7 @@ func TestAgenticAuthorizedRequestIsAudited(t *testing.T) {
 	})
 
 	t.Run("legacy all-requests posture", func(t *testing.T) {
-		h, buf := newAuditServer(t, &fakeBackend{}, func(c *config.Config) {
+		h, buf := newLoggedServer(t, &fakeBackend{}, func(c *config.Config) {
 			c.Agentic.Enabled = true
 		})
 		rec := postMessages(t, h, nil)
@@ -427,7 +427,7 @@ func TestAgenticAuthorizedRequestIsAudited(t *testing.T) {
 
 func TestPlainInferenceRequestIsNotAudited(t *testing.T) {
 	t.Run("agentic disabled", func(t *testing.T) {
-		h, buf := newAuditServer(t, &fakeBackend{})
+		h, buf := newLoggedServer(t, &fakeBackend{})
 		rec := postMessages(t, h, nil)
 		if rec.Code != http.StatusOK {
 			t.Fatalf("status = %d", rec.Code)
@@ -438,7 +438,7 @@ func TestPlainInferenceRequestIsNotAudited(t *testing.T) {
 	})
 
 	t.Run("no credential falls back to inference", func(t *testing.T) {
-		h, buf := newAuditServer(t, &fakeBackend{}, agenticPerRequest)
+		h, buf := newLoggedServer(t, &fakeBackend{}, agenticPerRequest)
 		rec := postMessages(t, h, nil)
 		if rec.Code != http.StatusOK {
 			t.Fatalf("status = %d", rec.Code)
@@ -450,7 +450,7 @@ func TestPlainInferenceRequestIsNotAudited(t *testing.T) {
 }
 
 func TestRejectedAgenticCredentialIsLoggedAtWarn(t *testing.T) {
-	h, buf := newAuditServer(t, &fakeBackend{}, agenticPerRequest)
+	h, buf := newLoggedServer(t, &fakeBackend{}, agenticPerRequest)
 	rec := postMessages(t, h, map[string]string{"X-Agentic-Authorization": "Bearer wrong"})
 	if rec.Code != http.StatusForbidden {
 		t.Fatalf("status = %d, want 403", rec.Code)
@@ -530,25 +530,6 @@ func TestStructuredHistoryAccepted(t *testing.T) {
 	}
 }
 
-// newLoggedServer is newTestServer with the server's slog output captured,
-// so tests can assert on emitted log lines.
-func newLoggedServer(t *testing.T, fb core.Backend) (http.Handler, *bytes.Buffer) {
-	t.Helper()
-	cfg := config.Config{
-		BindAddr:       "127.0.0.1:0",
-		Tokens:         [][]byte{[]byte("good-token")},
-		Backend:        "fake",
-		MaxConcurrent:  2,
-		RequestTimeout: 5 * time.Second,
-	}
-	buf := &bytes.Buffer{}
-	h, err := New(cfg, fb, WithLogger(slog.New(slog.NewTextHandler(buf, nil))))
-	if err != nil {
-		t.Fatalf("server.New: %v", err)
-	}
-	return h, buf
-}
-
 func TestMaxTokensWarningLoggedOncePerProcess(t *testing.T) {
 	// The fake backend does not enforce max_tokens; the gap must be logged,
 	// but only once — the Anthropic wire makes max_tokens mandatory, so a
@@ -565,6 +546,39 @@ func TestMaxTokensWarningLoggedOncePerProcess(t *testing.T) {
 	}
 	if n := strings.Count(buf.String(), "not enforced"); n != 1 {
 		t.Fatalf("max_tokens warning logged %d times across two requests, want exactly 1; log:\n%s", n, buf.String())
+	}
+}
+
+func TestDisabledAgenticDenialIsLogged(t *testing.T) {
+	// The "agentic execution disabled" branch must leave the same audit trail
+	// as an invalid credential.
+	h, buf := newLoggedServer(t, &fakeBackend{}) // agentic disabled
+	rec := postMessages(t, h, map[string]string{"X-Agentic-Authorization": "Bearer whatever"})
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, want 403", rec.Code)
+	}
+	lines := logLines(t, buf, "agentic request denied")
+	if len(lines) != 1 {
+		t.Fatalf("denial lines = %d, want exactly 1 (log: %s)", len(lines), buf.String())
+	}
+	if lines[0]["reason"] != "agentic execution disabled" {
+		t.Errorf("reason = %v, want %q", lines[0]["reason"], "agentic execution disabled")
+	}
+}
+
+func TestMaxTokensWarningOnOpenAIEndpoint(t *testing.T) {
+	// The warning must also fire for /v1/chat/completions traffic.
+	h, buf := newLoggedServer(t, &fakeBackend{}) // MaxTokens: false
+	body := `{"model":"sonnet","max_tokens":50,"messages":[{"role":"user","content":"hi"}]}`
+	req := httptest.NewRequest("POST", "/v1/chat/completions", strings.NewReader(body))
+	req.Header.Set("x-api-key", "good-token")
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body: %s", rec.Code, rec.Body.String())
+	}
+	if n := strings.Count(buf.String(), "not enforced"); n != 1 {
+		t.Fatalf("max_tokens warning logged %d times, want exactly 1; log:\n%s", n, buf.String())
 	}
 }
 

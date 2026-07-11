@@ -6,18 +6,16 @@ What is known to be missing or deferred, relative to the design document
 
 ## Near term (correctness & auditability)
 
-- [ ] **Log agentic requests individually.** The design calls agentic use
-  "opt-in, explicit, logged", but only startup is logged today. Each agentic
-  request should leave a log line (request-id, agentic flag) as an audit
-  trail.
-- [ ] **Handle `max_tokens` honestly.** Both wire formats accept it, but the
-  `claude` CLI has no equivalent flag, so it is silently ignored. Document
-  the limitation and log a warning when a client sets it.
-- [ ] **Back-port resolved decisions into `spec.md`.** OD-1/3/4 into §9, and
-  the answers implemented since: DQ-1 (defensive stream-json parsing), DQ-2
-  (model map with pass-through), DQ-4 (minimal JSON metrics), the
-  REQ-EXEC-04 ephemeral-workdir mechanism, and the REQ-EXEC-06 per-request
-  authorization design (`X-Agentic-Authorization` + `RELAY_AGENTIC_TOKENS`).
+- [x] **Log agentic requests individually.** Every authorized agentic request
+  now emits an Info audit line (request-id + path); denials are logged at
+  Warn with a reason.
+- [x] **Handle `max_tokens` honestly.** Backends declare enforcement via
+  `Capabilities.MaxTokens`; a one-time warning is logged when clients set it
+  on a non-enforcing backend; documented in `docs/api.md`;
+  `max_completion_tokens` now decoded on the OpenAI endpoint.
+- [x] **Back-port resolved decisions into `spec.md`.** DQ-1/2/4 answers,
+  REQ-EXEC-04/06 mechanisms, structured content, error surfacing, and the
+  process-group kill correction folded into the design doc.
 - [ ] **Add the requirements document to the repo.** `spec.md` derives from
   `agent-relay-spec.md` (requirements v0.1), which is not in the tree;
   requirement IDs it cites (REQ-EXEC-03, REQ-NET-03, REQ-CFG-01…) cannot be
