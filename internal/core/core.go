@@ -86,6 +86,10 @@ type InferRequest struct {
 	// (REQ-EXEC-06). Only the server sets it, after per-request
 	// authorization; backends refuse it unless configured for agentic mode.
 	Agentic bool
+	// OutputDir, when set on an agentic request, is the working directory
+	// the backend must use and must NOT delete — its lifecycle belongs to
+	// the server's output store (X-Agentic-Keep-Outputs).
+	OutputDir string
 }
 
 type EventKind int

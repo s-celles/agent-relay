@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Agentic output retrieval: `X-Agentic-Keep-Outputs: true` on an
+  agentic-authorized request retains its working directory under an
+  unguessable id (`X-Agentic-Outputs` response header); new endpoints
+  `GET /v1/outputs/{id}` (list), `GET /v1/outputs/{id}/files/{path}`
+  (download), `DELETE /v1/outputs/{id}` (release); retained outputs are
+  swept after `RELAY_OUTPUTS_TTL` (default 10m, `RELAY_OUTPUTS_DIR`
+  configurable).
+
+### Changed
+
+- DQ-3 resolved: configuration is env-only, final (no file overlay); the
+  lost requirements document is superseded by `spec.md` as the root
+  authoritative source.
+
 ## [0.3.0] - 2026-07-11
 
 ### Added

@@ -484,6 +484,39 @@ func TestMaterializeFilesNoopWithoutFiles(t *testing.T) {
 	}
 }
 
+func TestAgenticOutputDirIsUsedAndRetained(t *testing.T) {
+	// When the server supplies OutputDir (X-Agentic-Keep-Outputs), the
+	// agentic request runs there and the directory survives Infer — its
+	// lifecycle belongs to the server's output store, not the backend.
+	outDir := t.TempDir()
+	b := newTestBackend(t, core.BackendConfig{
+		CLIPath: stubCLI(t, cwdScript),
+		Agentic: core.AgenticConfig{Enabled: true},
+	})
+	sink := &collectSink{}
+	err := b.Infer(context.Background(), core.InferRequest{
+		Agentic:   true,
+		OutputDir: outDir,
+		Messages:  []core.Message{core.NewTextMessage(core.RoleUser, "x")},
+	}, sink)
+	if err != nil {
+		t.Fatalf("Infer: %v", err)
+	}
+	var cwd string
+	for _, ev := range sink.events {
+		if ev.Kind == core.EventTextDelta {
+			cwd = ev.Text
+		}
+	}
+	want, _ := filepath.EvalSymlinks(outDir)
+	if cwd != want {
+		t.Fatalf("cwd = %q, want the supplied OutputDir %q", cwd, want)
+	}
+	if _, err := os.Stat(outDir); err != nil {
+		t.Fatalf("OutputDir must survive Infer: %v", err)
+	}
+}
+
 func TestInferWithFilesRunsInEphemeralWorkdir(t *testing.T) {
 	// A file-carrying inference request must run with the ephemeral dir as
 	// cwd, so Read is auto-allowed on the materialized files.

@@ -224,7 +224,13 @@ func (b *Backend) Infer(ctx context.Context, req core.InferRequest, sink core.Ev
 
 	needFiles := hasFileBlocks(req)
 	workdir := b.workdir
-	if (b.agentic.Enabled && req.Agentic) || needFiles {
+	switch {
+	case b.agentic.Enabled && req.Agentic && req.OutputDir != "":
+		// The server retains this request's artifacts: run in the supplied
+		// directory and leave it alone — its lifecycle belongs to the output
+		// store (X-Agentic-Keep-Outputs).
+		workdir = req.OutputDir
+	case (b.agentic.Enabled && req.Agentic) || needFiles:
 		// REQ-EXEC-04: agentic requests never share state — each one runs in
 		// its own ephemeral directory (under the configured workdir when set,
 		// the system temp dir otherwise), removed after the process is reaped.

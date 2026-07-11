@@ -115,6 +115,12 @@ func TestFromEnvDefaults(t *testing.T) {
 	if cfg.Agentic.Enabled {
 		t.Error("Agentic must be disabled by default (REQ-EXEC-01)")
 	}
+	if cfg.OutputsTTL != 10*time.Minute {
+		t.Errorf("OutputsTTL = %v, want 10m default", cfg.OutputsTTL)
+	}
+	if cfg.OutputsDir == "" {
+		t.Error("OutputsDir must have a default")
+	}
 	if err := cfg.Validate(); err != nil {
 		t.Errorf("default config must validate: %v", err)
 	}
@@ -130,6 +136,8 @@ func TestFromEnvParsing(t *testing.T) {
 		"RELAY_CLAUDE_MODEL_MAP": "sonnet=claude-sonnet-5,haiku=claude-haiku-4-5",
 		"RELAY_ENV_DENY":         "MY_SECRET,OTHER_SECRET",
 		"RELAY_AGENTIC_TOKENS":   "ag-a,ag-b",
+		"RELAY_OUTPUTS_TTL":      "30m",
+		"RELAY_OUTPUTS_DIR":      "/srv/relay-outputs",
 	}
 	cfg, err := FromEnv(func(k string) string { return env[k] })
 	if err != nil {
@@ -163,6 +171,12 @@ func TestFromEnvParsing(t *testing.T) {
 	if len(cfg.AgenticTokens) != 2 || string(cfg.AgenticTokens[0]) != "ag-a" || string(cfg.AgenticTokens[1]) != "ag-b" {
 		t.Errorf("AgenticTokens = %q", cfg.AgenticTokens)
 	}
+	if cfg.OutputsTTL != 30*time.Minute {
+		t.Errorf("OutputsTTL = %v", cfg.OutputsTTL)
+	}
+	if cfg.OutputsDir != "/srv/relay-outputs" {
+		t.Errorf("OutputsDir = %q", cfg.OutputsDir)
+	}
 }
 
 func TestFromEnvInvalidValues(t *testing.T) {
@@ -170,6 +184,7 @@ func TestFromEnvInvalidValues(t *testing.T) {
 		"bad max concurrent": {"RELAY_MAX_CONCURRENT": "not-a-number"},
 		"bad timeout":        {"RELAY_REQUEST_TIMEOUT": "soon"},
 		"bad model map":      {"RELAY_CLAUDE_MODEL_MAP": "missing-equals"},
+		"bad outputs ttl":    {"RELAY_OUTPUTS_TTL": "eventually"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			e := env

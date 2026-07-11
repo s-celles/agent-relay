@@ -68,9 +68,11 @@ can say no:
 - An **ephemeral working directory** of its own, created under
   `RELAY_CLAUDE_WORKDIR` and deleted when the request ends. Concurrent
   agentic requests cannot see each other's files, and no state survives
-  between requests. Corollary: files the agent produces vanish with the
-  directory — anything you want to keep must be returned in the response
-  text.
+  between requests. Files the agent produces vanish with the directory —
+  unless the request was sent with `X-Agentic-Keep-Outputs: true`, in which
+  case the directory is retained under an unguessable id for retrieval via
+  `GET /v1/outputs/{id}` (see the [HTTP API](api.md#retrieving-agentic-outputs)),
+  swept after `RELAY_OUTPUTS_TTL`.
 
 **Audit trail**: agentic execution is not just opt-in but logged, per
 request. Every request that is actually authorized to run agentically emits

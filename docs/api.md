@@ -139,6 +139,23 @@ flags, each in its own ephemeral working directory. See
 [execution-modes.md](execution-modes.md) for the full inference-vs-agentic
 comparison.
 
+### Retrieving agentic outputs
+
+By default an agentic request's working directory is deleted when the
+request ends. Send `X-Agentic-Keep-Outputs: true` on an agentic-authorized
+request to retain it: the response carries an unguessable id in the
+`X-Agentic-Outputs` header, usable with:
+
+| Method + path | Effect |
+|---|---|
+| `GET /v1/outputs/{id}` | JSON listing (`{"id", "files":[{"path","size"}]}`) |
+| `GET /v1/outputs/{id}/files/{path}` | Download one artifact (octet-stream) |
+| `DELETE /v1/outputs/{id}` | Release immediately (204) |
+
+All three require the normal caller credential. Retained outputs are swept
+after `RELAY_OUTPUTS_TTL` (default 10m); the header on a non-agentic request
+is a 400. Path traversal in `{path}` is refused.
+
 ## `GET /health`
 
 Unauthenticated liveness probe: `{"status":"ok"}`.

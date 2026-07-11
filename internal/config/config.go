@@ -6,6 +6,8 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -25,7 +27,11 @@ type Config struct {
 	// Agentic.PerRequestAuthz is set (REQ-EXEC-06). Keep them distinct from
 	// the caller Tokens.
 	AgenticTokens [][]byte
-	LogLevel      string
+	// OutputsDir/OutputsTTL control retained agentic outputs
+	// (X-Agentic-Keep-Outputs): where they live and how long before sweep.
+	OutputsDir string
+	OutputsTTL time.Duration
+	LogLevel   string
 }
 
 // FromEnv builds a Config from environment variables. getenv is injectable
@@ -56,6 +62,10 @@ func FromEnv(getenv func(string) string) (Config, error) {
 	if cfg.RequestTimeout, err = time.ParseDuration(get("RELAY_REQUEST_TIMEOUT", "10m")); err != nil {
 		return Config{}, fmt.Errorf("RELAY_REQUEST_TIMEOUT: %w", err)
 	}
+	if cfg.OutputsTTL, err = time.ParseDuration(get("RELAY_OUTPUTS_TTL", "10m")); err != nil {
+		return Config{}, fmt.Errorf("RELAY_OUTPUTS_TTL: %w", err)
+	}
+	cfg.OutputsDir = get("RELAY_OUTPUTS_DIR", filepath.Join(os.TempDir(), "agent-relay-outputs"))
 
 	cfg.Agentic = core.AgenticConfig{
 		Enabled:         getenv("RELAY_AGENTIC_ENABLED") == "true",

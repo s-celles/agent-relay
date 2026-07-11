@@ -5,18 +5,23 @@ package server
 
 import (
 	"crypto/subtle"
+	"encoding/json"
 	"errors"
 	"io"
 	"log/slog"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/s-celles/agent-relay/internal/api/anthropic"
 	"github.com/s-celles/agent-relay/internal/api/openai"
 	"github.com/s-celles/agent-relay/internal/config"
 	"github.com/s-celles/agent-relay/internal/core"
 	"github.com/s-celles/agent-relay/internal/obs"
+	"github.com/s-celles/agent-relay/internal/outputs"
 )
 
 type startedSink interface {
@@ -31,6 +36,7 @@ type server struct {
 	agentic       core.AgenticConfig
 	agenticTokens [][]byte
 	caps          core.Capabilities
+	outputs       *outputs.Store
 	// maxTokensWarn gates the max_tokens-not-enforced warning to once per
 	// process: the Anthropic wire makes max_tokens mandatory, so warning on
 	// every request would flood the log.
@@ -50,6 +56,18 @@ func New(cfg config.Config, backend core.Backend, opts ...Option) (http.Handler,
 	if backend == nil {
 		return nil, errors.New("nil backend")
 	}
+	outputsDir := cfg.OutputsDir
+	if outputsDir == "" {
+		outputsDir = filepath.Join(os.TempDir(), "agent-relay-outputs")
+	}
+	outputsTTL := cfg.OutputsTTL
+	if outputsTTL <= 0 {
+		outputsTTL = 10 * time.Minute
+	}
+	store, err := outputs.New(outputsDir, outputsTTL)
+	if err != nil {
+		return nil, err
+	}
 	s := &server{
 		dispatcher: &core.Dispatcher{
 			Backend: backend,
@@ -61,6 +79,7 @@ func New(cfg config.Config, backend core.Backend, opts ...Option) (http.Handler,
 		agentic:       cfg.Agentic,
 		agenticTokens: cfg.AgenticTokens,
 		caps:          backend.Capabilities(),
+		outputs:       store,
 	}
 	for _, o := range opts {
 		o(s)
@@ -75,8 +94,67 @@ func New(cfg config.Config, backend core.Backend, opts ...Option) (http.Handler,
 	mux.Handle("POST /v1/chat/completions", auth(http.HandlerFunc(s.handleChat))) // REQ-API-03
 	mux.Handle("GET /health", http.HandlerFunc(s.handleHealth))                   // REQ-API-04
 	mux.Handle("GET /v1/metrics", auth(s.metrics.Handler()))                      // REQ-API-06
+	mux.Handle("GET /v1/outputs/{id}", auth(http.HandlerFunc(s.handleOutputsList)))
+	mux.Handle("GET /v1/outputs/{id}/files/{path...}", auth(http.HandlerFunc(s.handleOutputsDownload)))
+	mux.Handle("DELETE /v1/outputs/{id}", auth(http.HandlerFunc(s.handleOutputsDelete)))
 
 	return obs.WithRequestID(s.logger, mux), nil
+}
+
+// prepareOutputs honors X-Agentic-Keep-Outputs: the request's working
+// directory is allocated in the output store and survives the request under
+// an unguessable id, returned via the X-Agentic-Outputs response header.
+func (s *server) prepareOutputs(w http.ResponseWriter, r *http.Request, req *core.InferRequest, agentic bool, writeErr func(http.ResponseWriter, int, string)) bool {
+	if r.Header.Get("X-Agentic-Keep-Outputs") != "true" {
+		return true
+	}
+	if !agentic {
+		writeErr(w, http.StatusBadRequest, "X-Agentic-Keep-Outputs requires an agentic-authorized request")
+		return false
+	}
+	id := outputs.NewID()
+	dir, err := s.outputs.Create(id)
+	if err != nil {
+		s.logger.Error("allocate output dir", "err", err)
+		writeErr(w, http.StatusInternalServerError, "cannot allocate output storage")
+		return false
+	}
+	req.OutputDir = dir
+	w.Header().Set("X-Agentic-Outputs", id)
+	s.logger.Info("agentic outputs retained", "outputs_id", id, "id", w.Header().Get("X-Request-Id"))
+	return true
+}
+
+func (s *server) handleOutputsList(w http.ResponseWriter, r *http.Request) {
+	files, err := s.outputs.List(r.PathValue("id"))
+	if err != nil {
+		anthropic.WriteError(w, http.StatusNotFound, "unknown or expired outputs id")
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]any{
+		"id":    r.PathValue("id"),
+		"files": files,
+	})
+}
+
+func (s *server) handleOutputsDownload(w http.ResponseWriter, r *http.Request) {
+	f, err := s.outputs.Open(r.PathValue("id"), r.PathValue("path"))
+	if err != nil {
+		anthropic.WriteError(w, http.StatusNotFound, "unknown outputs id or file")
+		return
+	}
+	defer f.Close()
+	w.Header().Set("Content-Type", "application/octet-stream")
+	_, _ = io.Copy(w, f)
+}
+
+func (s *server) handleOutputsDelete(w http.ResponseWriter, r *http.Request) {
+	if err := s.outputs.Delete(r.PathValue("id")); err != nil {
+		anthropic.WriteError(w, http.StatusNotFound, "unknown or expired outputs id")
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func (s *server) handleHealth(w http.ResponseWriter, r *http.Request) {
@@ -189,6 +267,9 @@ func (s *server) handleMessages(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	req.Agentic = agentic
+	if !s.prepareOutputs(w, r, &req, agentic, anthropic.WriteError) {
+		return
+	}
 	id := "msg_" + obs.NewRequestID()
 	if req.Stream {
 		s.run(w, r, req, anthropic.NewStreamSink(w, id, req.Model), anthropic.WriteError)
@@ -216,6 +297,9 @@ func (s *server) handleChat(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	req.Agentic = agentic
+	if !s.prepareOutputs(w, r, &req, agentic, openai.WriteError) {
+		return
+	}
 	id := "chatcmpl-" + obs.NewRequestID()
 	if req.Stream {
 		s.run(w, r, req, openai.NewStreamSink(w, id, req.Model), openai.WriteError)

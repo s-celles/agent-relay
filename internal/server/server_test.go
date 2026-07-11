@@ -7,6 +7,8 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -31,6 +33,12 @@ func (f *fakeBackend) Capabilities() core.Capabilities {
 func (f *fakeBackend) Infer(ctx context.Context, req core.InferRequest, sink core.EventSink) error {
 	f.calls.Add(1)
 	f.lastAgentic.Store(req.Agentic)
+	if req.OutputDir != "" {
+		// Simulate an agentic run producing artifacts.
+		os.MkdirAll(filepath.Join(req.OutputDir, "sub"), 0o700)
+		os.WriteFile(filepath.Join(req.OutputDir, "result.txt"), []byte("artifact"), 0o600)
+		os.WriteFile(filepath.Join(req.OutputDir, "sub", "data.json"), []byte(`{"ok":true}`), 0o600)
+	}
 	if f.block {
 		<-ctx.Done()
 		return ctx.Err()
@@ -593,6 +601,110 @@ func TestNoMaxTokensWarningWhenBackendEnforcesIt(t *testing.T) {
 	}
 	if strings.Contains(buf.String(), "not enforced") {
 		t.Fatalf("no warning expected when the backend enforces max_tokens; log:\n%s", buf.String())
+	}
+}
+
+// Agentic output retrieval (X-Agentic-Keep-Outputs + /v1/outputs).
+
+func withOutputsDir(t *testing.T) func(*config.Config) {
+	dir := t.TempDir()
+	return func(c *config.Config) {
+		c.OutputsDir = dir
+		c.OutputsTTL = time.Minute
+	}
+}
+
+func TestKeepOutputsFlow(t *testing.T) {
+	h := newTestServer(t, &fakeBackend{}, agenticPerRequest, withOutputsDir(t))
+
+	rec := postMessages(t, h, map[string]string{
+		"X-Agentic-Authorization": "Bearer agentic-secret",
+		"X-Agentic-Keep-Outputs":  "true",
+	})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body: %s", rec.Code, rec.Body.String())
+	}
+	id := rec.Header().Get("X-Agentic-Outputs")
+	if id == "" {
+		t.Fatal("missing X-Agentic-Outputs response header")
+	}
+
+	// List the retained artifacts.
+	req := httptest.NewRequest("GET", "/v1/outputs/"+id, nil)
+	req.Header.Set("x-api-key", "good-token")
+	lrec := httptest.NewRecorder()
+	h.ServeHTTP(lrec, req)
+	if lrec.Code != http.StatusOK {
+		t.Fatalf("list status = %d, body: %s", lrec.Code, lrec.Body.String())
+	}
+	var listing struct {
+		Files []struct {
+			Path string `json:"path"`
+			Size int64  `json:"size"`
+		} `json:"files"`
+	}
+	if err := json.Unmarshal(lrec.Body.Bytes(), &listing); err != nil {
+		t.Fatalf("unmarshal listing: %v", err)
+	}
+	if len(listing.Files) != 2 {
+		t.Fatalf("files = %+v, want 2", listing.Files)
+	}
+
+	// Download one artifact.
+	req = httptest.NewRequest("GET", "/v1/outputs/"+id+"/files/sub/data.json", nil)
+	req.Header.Set("x-api-key", "good-token")
+	drec := httptest.NewRecorder()
+	h.ServeHTTP(drec, req)
+	if drec.Code != http.StatusOK || drec.Body.String() != `{"ok":true}` {
+		t.Fatalf("download = %d %q", drec.Code, drec.Body.String())
+	}
+
+	// Release, then everything 404s.
+	req = httptest.NewRequest("DELETE", "/v1/outputs/"+id, nil)
+	req.Header.Set("x-api-key", "good-token")
+	rrec := httptest.NewRecorder()
+	h.ServeHTTP(rrec, req)
+	if rrec.Code != http.StatusNoContent {
+		t.Fatalf("delete status = %d", rrec.Code)
+	}
+	req = httptest.NewRequest("GET", "/v1/outputs/"+id, nil)
+	req.Header.Set("x-api-key", "good-token")
+	grec := httptest.NewRecorder()
+	h.ServeHTTP(grec, req)
+	if grec.Code != http.StatusNotFound {
+		t.Fatalf("list after delete = %d, want 404", grec.Code)
+	}
+}
+
+func TestKeepOutputsRequiresAgentic(t *testing.T) {
+	h := newTestServer(t, &fakeBackend{}, agenticPerRequest, withOutputsDir(t))
+	// No agentic credential: the request degrades to inference, so retention
+	// must be refused rather than silently ignored.
+	rec := postMessages(t, h, map[string]string{"X-Agentic-Keep-Outputs": "true"})
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400", rec.Code)
+	}
+}
+
+func TestOutputsRequireAuth(t *testing.T) {
+	h := newTestServer(t, &fakeBackend{}, withOutputsDir(t))
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest("GET", "/v1/outputs/00000000000000000000000000000000", nil))
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("status = %d, want 401", rec.Code)
+	}
+}
+
+func TestOutputsUnknownOrInvalidID(t *testing.T) {
+	h := newTestServer(t, &fakeBackend{}, withOutputsDir(t))
+	for _, id := range []string{"00000000000000000000000000000000", "not-an-id", "%2e%2e"} {
+		req := httptest.NewRequest("GET", "/v1/outputs/"+id, nil)
+		req.Header.Set("x-api-key", "good-token")
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		if rec.Code != http.StatusNotFound {
+			t.Fatalf("id %q: status = %d, want 404", id, rec.Code)
+		}
 	}
 }
 

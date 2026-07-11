@@ -16,20 +16,23 @@ What is known to be missing or deferred, relative to the design document
 - [x] **Back-port resolved decisions into `spec.md`.** DQ-1/2/4 answers,
   REQ-EXEC-04/06 mechanisms, structured content, error surfacing, and the
   process-group kill correction folded into the design doc.
-- [ ] **Add the requirements document to the repo.** `spec.md` derives from
-  `agent-relay-spec.md` (requirements v0.1), which is not in the tree;
-  requirement IDs it cites (REQ-EXEC-03, REQ-NET-03, REQ-CFG-01…) cannot be
-  audited without it.
+- [x] **Requirements document: declared lost.** `agent-relay-spec.md`
+  (requirements v0.1), from which `spec.md` derives, is not recoverable.
+  Decision: `spec.md` is now the root authoritative document, and the
+  REQ-IDs it cites are defined by its own prose rather than audited against
+  an upstream file.
 
 ## Undecided (needs a design decision first)
 
-- [ ] **Config file overlay (DQ-3).** The design says "env-first with an
-  optional file overlay"; only env exists. Either implement a TOML overlay
-  or amend the spec to declare env-only as final.
-- [ ] **Retrieving agentic outputs.** Ephemeral workdirs delete whatever the
-  agent produced; anything to keep must fit in the response text. If real
-  workflows need artifacts back, design a retrieval mechanism (inline
-  base64, follow-up endpoint, …).
+- [x] **Config file overlay (DQ-3): resolved as env-only.** A TOML overlay
+  adds surface without need for this project; the spec now declares
+  env-first, env-only as final.
+- [x] **Retrieving agentic outputs.** Implemented as a retrieval endpoint:
+  agentic requests sent with `X-Agentic-Keep-Outputs: true` retain their
+  ephemeral working directory under an unguessable id (returned in the
+  `X-Agentic-Outputs` response header); `GET /v1/outputs/{id}` lists files,
+  `GET /v1/outputs/{id}/files/{path}` downloads, `DELETE /v1/outputs/{id}`
+  releases; retained outputs are swept after `RELAY_OUTPUTS_TTL`.
 
 ## Later (v0.2+ candidates)
 

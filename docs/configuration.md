@@ -22,6 +22,8 @@ failure aborts startup — the relay never limps along on a half-read config.
 | `RELAY_AGENTIC_PER_REQUEST_AUTHZ` | `false` | Require a per-request agentic credential: only requests carrying a valid `X-Agentic-Authorization` header run agentically, all others stay inference-only. Required to combine agentic mode with a non-loopback bind. |
 | `RELAY_AGENTIC_TOKENS` | *(empty)* | Comma-separated agentic credentials, mandatory when per-request authz is on. Keep them distinct from `RELAY_TOKENS`. |
 | `RELAY_AGENTIC_ARGS` | *(empty)* | Permission flags appended to the CLI when agentic mode is on. |
+| `RELAY_OUTPUTS_DIR` | *(system temp)* | Where retained agentic outputs (`X-Agentic-Keep-Outputs`) are stored. |
+| `RELAY_OUTPUTS_TTL` | `10m` | How long retained outputs survive before being swept. |
 
 The `RELAY_AGENTIC_*` variables switch the relay between its two execution
 modes; [execution-modes.md](execution-modes.md) explains what each mode can
