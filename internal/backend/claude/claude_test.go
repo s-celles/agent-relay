@@ -217,6 +217,108 @@ exit 1
 	}
 }
 
+// cwdScript reports the subprocess working directory back as a text delta.
+const cwdScript = `
+cat > /dev/null
+printf '{"type":"stream_event","event":{"type":"content_block_delta","delta":{"type":"text_delta","text":"%s"}}}\n' "$PWD"
+echo '{"type":"result","subtype":"success","result":"","usage":{"input_tokens":1,"output_tokens":1}}'
+`
+
+func reportedCwd(t *testing.T, b core.Backend) string {
+	t.Helper()
+	sink := &collectSink{}
+	if err := b.Infer(context.Background(), core.InferRequest{
+		Messages: []core.Message{{Role: core.RoleUser, Content: "x"}},
+	}, sink); err != nil {
+		t.Fatalf("Infer: %v", err)
+	}
+	for _, ev := range sink.events {
+		if ev.Kind == core.EventTextDelta {
+			return ev.Text
+		}
+	}
+	t.Fatal("no cwd delta received")
+	return ""
+}
+
+func TestAgenticEphemeralWorkdir(t *testing.T) {
+	// REQ-EXEC-04: each agentic request runs in its own ephemeral directory
+	// under the configured workdir, removed once the request finishes.
+	base := t.TempDir()
+	b := newTestBackend(t, core.BackendConfig{
+		CLIPath: stubCLI(t, cwdScript),
+		Workdir: base,
+		Agentic: core.AgenticConfig{Enabled: true},
+	})
+
+	first := reportedCwd(t, b)
+	second := reportedCwd(t, b)
+
+	// The child reports its cwd with symlinks resolved (macOS: /var ->
+	// /private/var), so compare against the resolved base.
+	resolvedBase, err := filepath.EvalSymlinks(base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, dir := range []string{first, second} {
+		if dir == resolvedBase {
+			t.Fatal("agentic request ran directly in the base workdir, not an ephemeral subdirectory")
+		}
+		if filepath.Dir(dir) != resolvedBase {
+			t.Fatalf("ephemeral dir %q is not under configured base %q", dir, resolvedBase)
+		}
+		if _, err := os.Stat(dir); !os.IsNotExist(err) {
+			t.Fatalf("ephemeral dir %q still exists after Infer returned", dir)
+		}
+	}
+	if first == second {
+		t.Fatalf("two requests shared the same workdir %q", first)
+	}
+	entries, err := os.ReadDir(base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 0 {
+		t.Fatalf("base workdir not clean after requests: %v", entries)
+	}
+}
+
+func TestAgenticEphemeralWorkdirDefaultBase(t *testing.T) {
+	// With no configured workdir, the ephemeral dir lives under the system
+	// temp dir — never the relay's own working directory.
+	b := newTestBackend(t, core.BackendConfig{
+		CLIPath: stubCLI(t, cwdScript),
+		Agentic: core.AgenticConfig{Enabled: true},
+	})
+	dir := reportedCwd(t, b)
+	relayCwd, _ := os.Getwd()
+	if dir == relayCwd {
+		t.Fatal("agentic request inherited the relay's working directory")
+	}
+	if _, err := os.Stat(dir); !os.IsNotExist(err) {
+		t.Fatalf("ephemeral dir %q still exists after Infer returned", dir)
+	}
+}
+
+func TestInferenceWorkdirIsConfiguredDir(t *testing.T) {
+	// Inference mode keeps the static configured workdir (spec §3).
+	base := t.TempDir()
+	b := newTestBackend(t, core.BackendConfig{
+		CLIPath: stubCLI(t, cwdScript),
+		Workdir: base,
+	})
+	got := reportedCwd(t, b)
+	// Resolve symlinks: on macOS t.TempDir() lives under /var -> /private/var.
+	want, _ := filepath.EvalSymlinks(base)
+	gotResolved, _ := filepath.EvalSymlinks(got)
+	if gotResolved != want {
+		t.Fatalf("cwd = %q, want configured workdir %q", got, base)
+	}
+	if _, err := os.Stat(base); err != nil {
+		t.Fatalf("configured workdir must survive the request: %v", err)
+	}
+}
+
 func TestBuildArgs(t *testing.T) {
 	b := newTestBackend(t, core.BackendConfig{
 		CLIPath:  "claude",

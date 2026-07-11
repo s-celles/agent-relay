@@ -10,6 +10,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"os"
 	"os/exec"
 	"strings"
 	"sync"
@@ -110,10 +111,23 @@ func (b *Backend) Infer(ctx context.Context, req core.InferRequest, sink core.Ev
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
+	workdir := b.workdir
+	if b.agentic.Enabled {
+		// REQ-EXEC-04: agentic requests never share state — each one runs in
+		// its own ephemeral directory (under the configured workdir when set,
+		// the system temp dir otherwise), removed after the process is reaped.
+		dir, err := os.MkdirTemp(b.workdir, "agent-relay-req-")
+		if err != nil {
+			return fmt.Errorf("create ephemeral workdir: %w", err)
+		}
+		defer os.RemoveAll(dir)
+		workdir = dir
+	}
+
 	cmd := exec.CommandContext(ctx, b.cliPath, b.buildArgs(req)...)
 	cmd.Env = b.sanitizedEnv() // REQ-PROC-05 / REQ-PROC-07
-	cmd.Dir = b.workdir        // "" in inference mode; ephemeral dir if agentic (REQ-EXEC-04)
-	setProcAttrs(cmd)          // kill the whole process group on cancel (REQ-PROC-04)
+	cmd.Dir = workdir
+	setProcAttrs(cmd) // kill the whole process group on cancel (REQ-PROC-04)
 	cmd.WaitDelay = 5 * time.Second
 
 	stdin, err := cmd.StdinPipe()

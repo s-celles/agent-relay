@@ -12,6 +12,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - AGPL-3.0-or-later license.
 - Terms-of-service disclaimer in the README and deployment docs (unofficial
   tool; personal-use scope for consumer subscriptions).
+- Claude backend: ephemeral per-request working directory in agentic mode
+  (REQ-EXEC-04) — created under `RELAY_CLAUDE_WORKDIR` (or the system temp
+  dir) and removed when the request ends, isolating concurrent requests.
 
 ### Fixed
 

@@ -77,3 +77,7 @@ Queued ───────────────▶ Starting ─────
   unknown fields are ignored, so CLI schema drift degrades gracefully.
 - No permission-bypass flags are ever passed on the default inference path;
   agentic flags are an explicit operator opt-in.
+- In agentic mode, every request runs in its own **ephemeral working
+  directory** (created under `RELAY_CLAUDE_WORKDIR`, or the system temp dir),
+  removed once the subprocess is reaped — concurrent requests never see each
+  other's files, and no state persists between requests.
