@@ -21,6 +21,7 @@ type streamLine struct {
 	IsError bool       `json:"is_error"`
 	Result  string     `json:"result"`
 	Usage   *wireUsage `json:"usage"`
+	CostUSD float64    `json:"total_cost_usd"`
 	Event   *struct {
 		Type  string `json:"type"`
 		Delta *struct {
@@ -73,10 +74,11 @@ func parseStreamJSONLine(line []byte) (core.Event, bool) {
 			return core.Event{Kind: core.EventError, Err: errors.New(msg)}, true
 		}
 		ev := core.Event{Kind: core.EventMessageStop}
-		if l.Usage != nil {
-			ev.Usage = &core.Usage{
-				InputTokens:  l.Usage.InputTokens,
-				OutputTokens: l.Usage.OutputTokens,
+		if l.Usage != nil || l.CostUSD > 0 {
+			ev.Usage = &core.Usage{CostUSD: l.CostUSD}
+			if l.Usage != nil {
+				ev.Usage.InputTokens = l.Usage.InputTokens
+				ev.Usage.OutputTokens = l.Usage.OutputTokens
 			}
 		}
 		return ev, true

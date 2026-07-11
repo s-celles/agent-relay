@@ -624,6 +624,22 @@ func TestRegisteredInCore(t *testing.T) {
 	}
 }
 
+func TestParseResultCarriesCost(t *testing.T) {
+	// The CLI reports the real dollar cost of the turn; forward it so the
+	// relay can attribute spend per request.
+	line := `{"type":"result","subtype":"success","total_cost_usd":0.0228547,"usage":{"input_tokens":10,"output_tokens":20}}`
+	ev, ok := parseStreamJSONLine([]byte(line))
+	if !ok || ev.Kind != core.EventMessageStop {
+		t.Fatalf("ev = %+v, ok = %v", ev, ok)
+	}
+	if ev.Usage == nil {
+		t.Fatal("usage missing")
+	}
+	if ev.Usage.CostUSD != 0.0228547 {
+		t.Errorf("CostUSD = %v, want 0.0228547", ev.Usage.CostUSD)
+	}
+}
+
 func TestParseStreamJSONLine(t *testing.T) {
 	cases := []struct {
 		name   string
@@ -634,6 +650,7 @@ func TestParseStreamJSONLine(t *testing.T) {
 		{"message start", `{"type":"stream_event","event":{"type":"message_start"}}`, true, core.EventMessageStart},
 		{"text delta", `{"type":"stream_event","event":{"type":"content_block_delta","delta":{"type":"text_delta","text":"x"}}}`, true, core.EventTextDelta},
 		{"success result", `{"type":"result","subtype":"success","usage":{"input_tokens":1,"output_tokens":2}}`, true, core.EventMessageStop},
+		{"result with cost", `{"type":"result","subtype":"success","total_cost_usd":0.0228,"usage":{"input_tokens":1,"output_tokens":2}}`, true, core.EventMessageStop},
 		{"error result", `{"type":"result","subtype":"error_max_turns","is_error":true,"result":"limit"}`, true, core.EventError},
 		{"init line ignored", `{"type":"system","subtype":"init"}`, false, 0},
 		{"assistant line ignored", `{"type":"assistant","message":{"content":[{"type":"text","text":"dup"}]}}`, false, 0},

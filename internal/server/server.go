@@ -4,6 +4,7 @@
 package server
 
 import (
+	"context"
 	"crypto/subtle"
 	"encoding/json"
 	"errors"
@@ -27,6 +28,42 @@ import (
 type startedSink interface {
 	core.EventSink
 	Started() bool
+}
+
+// usageSink wraps a sink to observe the final usage on its way to the
+// client, so the server can account tokens and cost per request without each
+// wire format having to expose them.
+type usageSink struct {
+	core.EventSink
+	usage core.Usage
+}
+
+func (u *usageSink) Emit(ctx context.Context, ev core.Event) error {
+	if ev.Kind == core.EventMessageStop && ev.Usage != nil {
+		u.usage = *ev.Usage
+	}
+	return u.EventSink.Emit(ctx, ev)
+}
+
+// usageStreamSink keeps the Started() behavior of a streaming sink.
+type usageStreamSink struct {
+	usageSink
+	inner startedSink
+}
+
+func (u *usageStreamSink) Started() bool { return u.inner.Started() }
+
+// accountUsage logs the request's usage and cost, correlated by request id,
+// and feeds the cumulative metrics.
+func (s *server) accountUsage(w http.ResponseWriter, r *http.Request, u core.Usage) {
+	s.metrics.RecordUsage(u.InputTokens, u.OutputTokens, u.CostUSD)
+	s.logger.Info("request usage",
+		"id", w.Header().Get("X-Request-Id"),
+		"path", r.URL.Path,
+		"input_tokens", u.InputTokens,
+		"output_tokens", u.OutputTokens,
+		"cost_usd", u.CostUSD,
+	)
 }
 
 type server struct {
@@ -343,7 +380,9 @@ func (s *server) run(w http.ResponseWriter, r *http.Request, req core.InferReque
 	s.metrics.RequestStarted()
 	defer s.metrics.RequestFinished()
 
-	err := s.dispatcher.Do(r.Context(), req, sink)
+	observed := &usageStreamSink{usageSink: usageSink{EventSink: sink}, inner: sink}
+	err := s.dispatcher.Do(r.Context(), req, observed)
+	s.accountUsage(w, r, observed.usage)
 	if err == nil {
 		return
 	}
@@ -356,7 +395,10 @@ func (s *server) runCollected(w http.ResponseWriter, r *http.Request, req core.I
 	s.metrics.RequestStarted()
 	defer s.metrics.RequestFinished()
 
-	if err := s.dispatcher.Do(r.Context(), req, sink); err != nil {
+	observed := &usageSink{EventSink: sink}
+	err := s.dispatcher.Do(r.Context(), req, observed)
+	s.accountUsage(w, r, observed.usage)
+	if err != nil {
 		s.reportDispatchError(w, r, err, false, nil, writeErr)
 		return false
 	}

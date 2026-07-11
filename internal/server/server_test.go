@@ -25,6 +25,7 @@ type fakeBackend struct {
 	clientTools bool
 	maxTokens   bool
 	sampling    bool
+	costUSD     float64
 }
 
 func (f *fakeBackend) Name() string { return "fake" }
@@ -52,7 +53,9 @@ func (f *fakeBackend) Infer(ctx context.Context, req core.InferRequest, sink cor
 	for _, ev := range []core.Event{
 		{Kind: core.EventMessageStart},
 		{Kind: core.EventTextDelta, Text: "Hello"},
-		{Kind: core.EventMessageStop, Usage: &core.Usage{InputTokens: 3, OutputTokens: 5}},
+		{Kind: core.EventMessageStop, Usage: &core.Usage{
+			InputTokens: 3, OutputTokens: 5, CostUSD: f.costUSD,
+		}},
 	} {
 		if err := sink.Emit(ctx, ev); err != nil {
 			return err
@@ -560,6 +563,51 @@ func TestMaxTokensWarningLoggedOncePerProcess(t *testing.T) {
 	}
 	if n := strings.Count(buf.String(), "not enforced"); n != 1 {
 		t.Fatalf("max_tokens warning logged %d times across two requests, want exactly 1; log:\n%s", n, buf.String())
+	}
+}
+
+func TestUsageIsAccountedPerRequest(t *testing.T) {
+	// Every served request logs its token usage and dollar cost, correlated
+	// by request id, and feeds the cumulative metrics — so a harness that
+	// fans out can attribute spend.
+	fb := &fakeBackend{costUSD: 0.0228}
+	h, buf := newLoggedServer(t, fb)
+
+	rec := postMessages(t, h, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d", rec.Code)
+	}
+
+	lines := logLines(t, buf, "request usage")
+	if len(lines) != 1 {
+		t.Fatalf("usage lines = %d, want 1 (log: %s)", len(lines), buf.String())
+	}
+	entry := lines[0]
+	if entry["id"] != rec.Header().Get("X-Request-Id") {
+		t.Errorf("id = %v, want the X-Request-Id header", entry["id"])
+	}
+	if entry["input_tokens"] != float64(3) || entry["output_tokens"] != float64(5) {
+		t.Errorf("tokens = %v/%v, want 3/5", entry["input_tokens"], entry["output_tokens"])
+	}
+	if cost, _ := entry["cost_usd"].(float64); cost < 0.0227 || cost > 0.0229 {
+		t.Errorf("cost_usd = %v, want ~0.0228", entry["cost_usd"])
+	}
+
+	// The same numbers must reach /v1/metrics.
+	req := httptest.NewRequest("GET", "/v1/metrics", nil)
+	req.Header.Set("x-api-key", "good-token")
+	mrec := httptest.NewRecorder()
+	h.ServeHTTP(mrec, req)
+	var m struct {
+		InputTokens  int64   `json:"input_tokens_total"`
+		OutputTokens int64   `json:"output_tokens_total"`
+		CostUSD      float64 `json:"cost_usd_total"`
+	}
+	if err := json.Unmarshal(mrec.Body.Bytes(), &m); err != nil {
+		t.Fatalf("metrics: %v", err)
+	}
+	if m.InputTokens != 3 || m.OutputTokens != 5 || m.CostUSD < 0.0227 {
+		t.Errorf("metrics = %+v", m)
 	}
 }
 

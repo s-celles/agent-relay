@@ -61,6 +61,37 @@ What is known to be missing or deferred, relative to the design document
   to a `Human:`/`Assistant:` transcript on stdin — an approximation the CLI
   imposes.
 
+## Harness engineering
+
+Turning the relay from "an inference proxy that can also run a throwaway
+agent" into an *observable, resumable agent-execution service* — the
+substrate a harness needs. Grounded in what the CLI's `stream-json` already
+emits and the relay currently drops.
+
+- [ ] **Tool-activity traces.** The CLI emits `assistant` lines carrying
+  `tool_use` blocks and `user` lines carrying `tool_result`; the parser
+  ignores them, so an agentic run is a black box. Re-emit them under custom
+  SSE event names (`agent_tool_use`, `agent_tool_result`) — standard clients
+  ignore unknown event types, so nothing breaks — and/or persist a
+  `trace.jsonl` alongside retained outputs.
+- [ ] **Session continuity (`--resume`).** Every stream-json line carries a
+  `session_id` that the relay discards. Expose it (`X-Session-Id` response
+  header), accept it back on a later request, and pass `--resume` to the CLI:
+  the agent keeps its context and prompt cache across requests. Composes with
+  `X-Agentic-Keep-Outputs` to give a persistent agentic workspace; likely
+  requires reusing the retained working directory.
+- [x] **Per-request cost accounting.** The CLI's reported `total_cost_usd`
+  and token counts now ride on `EventMessageStop`; every served request logs
+  a `request usage` line (tokens + `cost_usd`, correlated by `X-Request-Id`)
+  and feeds `input_tokens_total` / `output_tokens_total` / `cost_usd_total`
+  in `/v1/metrics`.
+- [ ] **Backpressure signals.** A full pool answers a bare 503; add
+  `Retry-After`, and a per-token quota (SECURITY.md lists per-caller rate
+  limiting as explicitly not defended).
+- [ ] **Per-request timeout override.** An `X-Request-Timeout` header capped
+  by `RELAY_REQUEST_TIMEOUT`: a long agentic task and a short classification
+  should not share one global deadline.
+
 ## Wire-compatibility polish
 
 - [x] Signal (rather than silently drop) unsupported sampling parameters:

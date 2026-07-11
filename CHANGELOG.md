@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Per-request cost and usage accounting: the backend-reported dollar cost
+  (the claude CLI's `total_cost_usd`) and token counts are now surfaced —
+  each served request logs a `request usage` line (`input_tokens`,
+  `output_tokens`, `cost_usd`, correlated by `X-Request-Id`), and
+  `/v1/metrics` gains `input_tokens_total`, `output_tokens_total`, and
+  `cost_usd_total`. A client fanning requests out can attribute spend.
+- `ROADMAP.md`: "Harness engineering" section — tool-activity traces,
+  session continuity (`--resume`), backpressure signals, per-request timeout
+  override.
+
 ## [0.5.0] - 2026-07-11
 
 ### Added

@@ -113,7 +113,12 @@ const (
 	EventToolUseStop
 )
 
-type Usage struct{ InputTokens, OutputTokens int }
+type Usage struct {
+	InputTokens, OutputTokens int
+	// CostUSD is the backend-reported dollar cost of the turn, when it
+	// reports one (the claude CLI does). Zero means "not reported".
+	CostUSD float64
+}
 
 type Event struct {
 	Kind EventKind

@@ -180,9 +180,19 @@ Authenticated, minimal JSON counters:
   "in_flight": 1,
   "rejected_busy": 0,
   "unauthorized": 3,
-  "backend_errors": 0
+  "agentic_denied": 0,
+  "backend_errors": 0,
+  "input_tokens_total": 1280,
+  "output_tokens_total": 9450,
+  "cost_usd_total": 0.284
 }
 ```
+
+`cost_usd_total` is the sum of the dollar costs the backend reports per turn
+(the claude CLI reports one). Each served request also logs a `request usage`
+line carrying its `input_tokens`, `output_tokens`, and `cost_usd`, correlated
+by `X-Request-Id` — enough for a fanning-out client to attribute spend
+per request.
 
 ## Errors
 

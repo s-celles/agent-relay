@@ -32,6 +32,11 @@ type Metrics struct {
 	unauthorized  atomic.Int64
 	agenticDenied atomic.Int64
 	backendErrors atomic.Int64
+	inputTokens   atomic.Int64
+	outputTokens  atomic.Int64
+	// costMicroUSD accumulates the backend-reported cost in millionths of a
+	// dollar: an integer counter keeps the atomic add lock-free.
+	costMicroUSD atomic.Int64
 }
 
 func NewMetrics() *Metrics { return &Metrics{start: time.Now()} }
@@ -42,6 +47,14 @@ func (m *Metrics) RejectedBusy()    { m.rejectedBusy.Add(1) }
 func (m *Metrics) Unauthorized()    { m.unauthorized.Add(1) }
 func (m *Metrics) AgenticDenied()   { m.agenticDenied.Add(1) }
 func (m *Metrics) BackendError()    { m.backendErrors.Add(1) }
+
+// RecordUsage accumulates the token counts and dollar cost of one served
+// request, so operators (and fanning-out harnesses) can attribute spend.
+func (m *Metrics) RecordUsage(inputTokens, outputTokens int, costUSD float64) {
+	m.inputTokens.Add(int64(inputTokens))
+	m.outputTokens.Add(int64(outputTokens))
+	m.costMicroUSD.Add(int64(costUSD * 1e6))
+}
 
 // Handler serves the metrics snapshot as JSON.
 func (m *Metrics) Handler() http.Handler {
@@ -55,6 +68,10 @@ func (m *Metrics) Handler() http.Handler {
 			"unauthorized":   m.unauthorized.Load(),
 			"agentic_denied": m.agenticDenied.Load(),
 			"backend_errors": m.backendErrors.Load(),
+
+			"input_tokens_total":  m.inputTokens.Load(),
+			"output_tokens_total": m.outputTokens.Load(),
+			"cost_usd_total":      float64(m.costMicroUSD.Load()) / 1e6,
 		})
 	})
 }
