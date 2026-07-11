@@ -7,6 +7,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **OpenAPI 3.1 description** (`docs/openapi.json`), rendered with Swagger UI at
+  [/openapi/](https://s-celles.github.io/agent-relay/openapi/). Deliberately
+  **scoped to what the relay adds**, not to what it proxies: the bodies of
+  `/v1/messages` and `/v1/chat/completions` are the Anthropic and OpenAI wire
+  formats, specified upstream and implemented by the official SDKs, so restating
+  them here would only create a second source of truth that drifts. What *is*
+  specified in full is the part only this relay defines — authentication, the
+  `X-Agentic-*` / `X-Session-Id` / `X-Request-Timeout` / `X-Agent-Traces` header
+  contract, the backpressure and deadline status codes (503/429 with
+  `Retry-After`, 504 as distinct from 502), and the retained-outputs endpoints.
+  The A2A surface is excluded on purpose: its Agent Card already *is* the
+  machine-readable contract.
+- **A drift test that keeps it honest** (`internal/server/openapi_test.go`). The
+  server now records the routes it registers, and the test holds the description
+  against them in both directions: every route is documented (or explicitly
+  listed as out of scope, with its reason), every documented operation is really
+  served, and every exclusion still names a live route. Add, move or delete an
+  endpoint without touching `openapi.json` and the build fails. An API
+  description that drifts is worse than none — it lies with authority.
+- CI validates `docs/openapi.json` as a real OpenAPI document, so the file
+  cannot be valid-looking JSON that no tool accepts.
+
 ## [0.8.0] - 2026-07-11
 
 ### Added

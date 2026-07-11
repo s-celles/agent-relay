@@ -174,8 +174,8 @@ func (s *server) mountA2A(mux *http.ServeMux, cfg config.Config, models []string
 	})
 	handler := a2asrv.NewHandler(executor, a2asrv.WithLogger(s.logger))
 
-	mux.Handle("POST /a2a", throttledAuth(a2asrv.NewJSONRPCHandler(handler), writeA2AError))
-	mux.Handle("GET "+a2asrv.WellKnownAgentCardPath, a2asrv.NewStaticAgentCardHandler(
+	s.handle(mux, "POST /a2a", throttledAuth(a2asrv.NewJSONRPCHandler(handler), writeA2AError))
+	s.handle(mux, "GET "+a2asrv.WellKnownAgentCardPath, a2asrv.NewStaticAgentCardHandler(
 		a2aapi.NewAgentCard(a2aapi.CardConfig{
 			BaseURL: cfg.PublicURL,
 			Version: s.version,

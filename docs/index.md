@@ -51,6 +51,7 @@ curl -N http://127.0.0.1:18082/v1/messages \
 - [Execution modes](execution-modes.md) — inference vs agentic, in depth
 - [Configuration](configuration.md) — environment variables and startup guards
 - [HTTP API](api.md) — endpoints, wire formats, error shapes
+- [OpenAPI description](openapi.md) — the machine-readable contract for what the relay *adds*
 - [Agent2Agent (A2A)](a2a.md) — the relay as an A2A agent: tasks, artifacts, contexts
 - [API vs relay limitations](limitations.md) — what the CLI backend cannot do
 - [Deployment](deployment.md) — Docker, docker-compose, NixOS notes

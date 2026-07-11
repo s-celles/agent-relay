@@ -37,9 +37,24 @@ jobs:
         run: go vet ./...
 
       # The suite spawns a stub `claude` script, never the real CLI: no
-      # credentials are needed and no tokens are ever spent.
+      # credentials are needed and no tokens are ever spent. It also holds
+      # docs/openapi.json against the routes the server actually registers.
       - name: test (race)
         run: go test -race ./...
 
       - name: build
         run: go build ./...
+
+      # The Go tests check that the OpenAPI description covers every route;
+      # this checks that the description is a valid OpenAPI document.
+      - name: validate the OpenAPI description
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          pip install --quiet openapi-spec-validator
+          python -c "
+          from openapi_spec_validator import validate
+          from openapi_spec_validator.readers import read_from_filename
+          spec, _ = read_from_filename('docs/openapi.json')
+          validate(spec)
+          print('docs/openapi.json is a valid OpenAPI 3.1 document')
+          "

@@ -191,6 +191,8 @@ type server struct {
 	toolSessionTTL time.Duration
 	// version is what the A2A Agent Card reports as this agent's version.
 	version string
+	// routes records every registered pattern, for the OpenAPI drift test.
+	routes []string
 	// maxTokensWarn gates the max_tokens-not-enforced warning to once per
 	// process: the Anthropic wire makes max_tokens mandatory, so warning on
 	// every request would flood the log.
@@ -222,8 +224,15 @@ func New(cfg config.Config, backend core.Backend, opts ...Option) (http.Handler,
 // logical model to the backend that serves it, everything else goes to the
 // default backend.
 func NewRouted(cfg config.Config, backend core.Backend, routes map[string]core.Backend, opts ...Option) (http.Handler, error) {
+	_, h, err := newRouted(cfg, backend, routes, opts...)
+	return h, err
+}
+
+// newRouted is NewRouted with the server itself returned, so tests can read
+// what it actually registered (see openapi_test.go).
+func newRouted(cfg config.Config, backend core.Backend, routes map[string]core.Backend, opts ...Option) (*server, http.Handler, error) {
 	if backend == nil {
-		return nil, errors.New("nil backend")
+		return nil, nil, errors.New("nil backend")
 	}
 	outputsDir := cfg.OutputsDir
 	if outputsDir == "" {
@@ -235,7 +244,7 @@ func NewRouted(cfg config.Config, backend core.Backend, routes map[string]core.B
 	}
 	store, err := outputs.New(outputsDir, outputsTTL)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	// A parked tool call may wait as long as a request may run.
 	toolTTL := outputsTTL
@@ -244,7 +253,7 @@ func NewRouted(cfg config.Config, backend core.Backend, routes map[string]core.B
 	}
 	bridge, err := toolbridge.New(toolTTL)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	s := &server{
 		dispatcher: &core.Dispatcher{
@@ -281,13 +290,13 @@ func NewRouted(cfg config.Config, backend core.Backend, routes map[string]core.B
 	}
 
 	mux := http.NewServeMux()
-	mux.Handle("POST /v1/messages", throttledAuth(http.HandlerFunc(s.handleMessages), anthropic.WriteError))  // REQ-API-01
-	mux.Handle("POST /v1/chat/completions", throttledAuth(http.HandlerFunc(s.handleChat), openai.WriteError)) // REQ-API-03
-	mux.Handle("GET /health", http.HandlerFunc(s.handleHealth))                                               // REQ-API-04
-	mux.Handle("GET /v1/metrics", auth(s.metrics.Handler()))                                                  // REQ-API-06
-	mux.Handle("GET /v1/outputs/{id}", auth(http.HandlerFunc(s.handleOutputsList)))
-	mux.Handle("GET /v1/outputs/{id}/files/{path...}", auth(http.HandlerFunc(s.handleOutputsDownload)))
-	mux.Handle("DELETE /v1/outputs/{id}", auth(http.HandlerFunc(s.handleOutputsDelete)))
+	s.handle(mux, "POST /v1/messages", throttledAuth(http.HandlerFunc(s.handleMessages), anthropic.WriteError))  // REQ-API-01
+	s.handle(mux, "POST /v1/chat/completions", throttledAuth(http.HandlerFunc(s.handleChat), openai.WriteError)) // REQ-API-03
+	s.handle(mux, "GET /health", http.HandlerFunc(s.handleHealth))                                               // REQ-API-04
+	s.handle(mux, "GET /v1/metrics", auth(s.metrics.Handler()))                                                  // REQ-API-06
+	s.handle(mux, "GET /v1/outputs/{id}", auth(http.HandlerFunc(s.handleOutputsList)))
+	s.handle(mux, "GET /v1/outputs/{id}/files/{path...}", auth(http.HandlerFunc(s.handleOutputsDownload)))
+	s.handle(mux, "DELETE /v1/outputs/{id}", auth(http.HandlerFunc(s.handleOutputsDelete)))
 
 	// Agent2Agent is opt-in: it publishes a card that names the models served
 	// and says whether this host runs an agent, so an operator asks for it.
@@ -295,7 +304,16 @@ func NewRouted(cfg config.Config, backend core.Backend, routes map[string]core.B
 		s.mountA2A(mux, cfg, servedModels(cfg, backend, routes), throttledAuth)
 	}
 
-	return obs.WithRequestID(s.logger, mux), nil
+	return s, obs.WithRequestID(s.logger, mux), nil
+}
+
+// handle registers a route and remembers its pattern, so a test can hold the
+// published OpenAPI description against what the server actually serves. A
+// route that exists but is undocumented (or documented but gone) is the way an
+// API description quietly turns into a lie.
+func (s *server) handle(mux *http.ServeMux, pattern string, h http.Handler) {
+	s.routes = append(s.routes, pattern)
+	mux.Handle(pattern, h)
 }
 
 // prepareOutputs resolves the request's workspace:

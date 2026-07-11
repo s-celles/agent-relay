@@ -1,9 +1,14 @@
 # HTTP API
 
+This page is the prose. The same contract is published machine-readably as
+[`openapi.json`](openapi.md) — scoped to what the relay *adds* (headers, status
+codes, retained outputs), since the model APIs themselves are specified
+upstream.
+
 ## Authentication
 
-Every endpoint except `GET /health` requires a configured token, supplied as
-either header:
+Every endpoint except `GET /health` — and, when A2A is enabled, the public
+Agent Card — requires a configured token, supplied as either header:
 
 ```
 Authorization: Bearer <token>

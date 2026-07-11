@@ -1,0 +1,415 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "agent-relay",
+    "version": "0.8.0",
+    "summary": "The relay's own HTTP contract — not a re-specification of the model APIs.",
+    "description": "This document describes **what the relay adds**, and deliberately not what it merely proxies.\n\nThe request and response bodies of `/v1/messages` and `/v1/chat/completions` are those of the **Anthropic Messages API** and the **OpenAI Chat Completions API**; they are specified upstream, implemented by the official SDKs, and are not restated here (re-deriving them would create a second source of truth that silently drifts). What *is* specified here is the part only this relay defines: the authentication, the `X-Agentic-*` / `X-Session-Id` / `X-Request-Timeout` header contract, the backpressure and timeout status codes, and the retained-outputs endpoints.\n\n**Out of scope on purpose:** the Agent2Agent surface (`POST /a2a`, `GET /.well-known/agent-card.json`). A2A is self-describing — its Agent Card *is* the machine-readable contract, and its normative schema is the A2A protobuf. Describing it a third time here is exactly how the upstream specification acquired the inconsistencies recorded in `upstream-bugs.md`. See [Agent2Agent](a2a.md).\n\nA test (`internal/server/openapi_test.go`) holds this document against the routes the server actually registers, so an endpoint cannot be added, moved, or removed without this file failing the build.",
+    "license": {
+      "name": "AGPL-3.0-or-later",
+      "identifier": "AGPL-3.0-or-later"
+    }
+  },
+  "servers": [
+    {
+      "url": "http://127.0.0.1:18082",
+      "description": "Default loopback bind (RELAY_BIND)."
+    }
+  ],
+  "tags": [
+    { "name": "inference", "description": "Model APIs the relay fronts. Bodies are upstream's; headers and failure modes are the relay's." },
+    { "name": "outputs", "description": "Files produced by agentic requests, retained for later retrieval." },
+    { "name": "operations", "description": "Liveness and counters." }
+  ],
+  "security": [{ "bearerAuth": [] }, { "apiKeyAuth": [] }],
+  "paths": {
+    "/v1/messages": {
+      "post": {
+        "tags": ["inference"],
+        "summary": "Anthropic Messages API",
+        "description": "Body and success response follow the [Anthropic Messages API](https://docs.anthropic.com/en/api/messages) — point an existing Anthropic SDK at this relay rather than generating a client from this document. Set `stream: true` for Server-Sent Events.\n\nNote the relay's own caveats, which no schema can express: `max_tokens` is accepted but **not enforced** by the `claude` backend, and sampling parameters are dropped there (both are honored by the `ollama` backend). See [API vs relay limitations](limitations.md).",
+        "operationId": "createMessage",
+        "parameters": [
+          { "$ref": "#/components/parameters/AgenticAuthorization" },
+          { "$ref": "#/components/parameters/AgenticKeepOutputs" },
+          { "$ref": "#/components/parameters/AgenticOutputs" },
+          { "$ref": "#/components/parameters/SessionId" },
+          { "$ref": "#/components/parameters/RequestTimeout" },
+          { "$ref": "#/components/parameters/AgentTraces" }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/UpstreamBody" }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The model's reply. `application/json` when `stream` is false, otherwise an SSE stream.",
+            "headers": {
+              "X-Request-Id": { "$ref": "#/components/headers/XRequestId" },
+              "X-Session-Id": { "$ref": "#/components/headers/XSessionId" },
+              "X-Agentic-Outputs": { "$ref": "#/components/headers/XAgenticOutputs" },
+              "X-Request-Timeout": { "$ref": "#/components/headers/XRequestTimeout" }
+            },
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/UpstreamBody" } },
+              "text/event-stream": {
+                "schema": {
+                  "type": "string",
+                  "description": "Anthropic SSE events. With `X-Agent-Traces: true`, two extra event types are interleaved: `agent_tool_use` and `agent_tool_result` (the backend agent's own tool activity — not part of the model's reply, and off by default because unknown event types can trip strict SDKs)."
+                }
+              }
+            }
+          },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/AgenticForbidden" },
+          "429": { "$ref": "#/components/responses/RateLimited" },
+          "502": { "$ref": "#/components/responses/BackendError" },
+          "503": { "$ref": "#/components/responses/Busy" },
+          "504": { "$ref": "#/components/responses/Timeout" }
+        }
+      }
+    },
+    "/v1/chat/completions": {
+      "post": {
+        "tags": ["inference"],
+        "summary": "OpenAI Chat Completions API",
+        "description": "Body and success response follow the [OpenAI Chat Completions API](https://platform.openai.com/docs/api-reference/chat). `stream_options.include_usage` is honored. The same relay headers, caveats and failure modes apply as on `/v1/messages`.",
+        "operationId": "createChatCompletion",
+        "parameters": [
+          { "$ref": "#/components/parameters/AgenticAuthorization" },
+          { "$ref": "#/components/parameters/AgenticKeepOutputs" },
+          { "$ref": "#/components/parameters/AgenticOutputs" },
+          { "$ref": "#/components/parameters/SessionId" },
+          { "$ref": "#/components/parameters/RequestTimeout" }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/UpstreamBody" }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The model's reply. `application/json` when `stream` is false, otherwise an SSE stream terminated by `data: [DONE]`.",
+            "headers": {
+              "X-Request-Id": { "$ref": "#/components/headers/XRequestId" },
+              "X-Session-Id": { "$ref": "#/components/headers/XSessionId" },
+              "X-Agentic-Outputs": { "$ref": "#/components/headers/XAgenticOutputs" },
+              "X-Request-Timeout": { "$ref": "#/components/headers/XRequestTimeout" }
+            },
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/UpstreamBody" } },
+              "text/event-stream": { "schema": { "type": "string" } }
+            }
+          },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/AgenticForbidden" },
+          "429": { "$ref": "#/components/responses/RateLimited" },
+          "502": { "$ref": "#/components/responses/BackendError" },
+          "503": { "$ref": "#/components/responses/Busy" },
+          "504": { "$ref": "#/components/responses/Timeout" }
+        }
+      }
+    },
+    "/v1/outputs/{id}": {
+      "parameters": [{ "$ref": "#/components/parameters/OutputsId" }],
+      "get": {
+        "tags": ["outputs"],
+        "summary": "List the files an agentic request retained",
+        "description": "The working directory of a request sent with `X-Agentic-Keep-Outputs: true`. Retained directories are swept after `RELAY_OUTPUTS_TTL`.",
+        "operationId": "listOutputs",
+        "responses": {
+          "200": {
+            "description": "The retained files, relative paths, stable order.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": ["id", "files"],
+                  "properties": {
+                    "id": { "type": "string" },
+                    "files": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "required": ["path", "size"],
+                        "properties": {
+                          "path": { "type": "string", "description": "Relative to the request's working directory.", "examples": ["report.md", "sub/data.json"] },
+                          "size": { "type": "integer", "format": "int64" }
+                        }
+                      }
+                    }
+                  }
+                },
+                "examples": {
+                  "agenticRun": {
+                    "value": {
+                      "id": "f03f21d0b2a6e0875e339a5ce9c8107f",
+                      "files": [
+                        { "path": "primes.txt", "size": 12 },
+                        { "path": "trace.jsonl", "size": 431 }
+                      ]
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "404": { "$ref": "#/components/responses/OutputsNotFound" }
+        }
+      },
+      "delete": {
+        "tags": ["outputs"],
+        "summary": "Release a retained working directory",
+        "description": "Deletes the directory and everything under it, without waiting for the TTL.",
+        "operationId": "deleteOutputs",
+        "responses": {
+          "204": { "description": "Released." },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "404": { "$ref": "#/components/responses/OutputsNotFound" }
+        }
+      }
+    },
+    "/v1/outputs/{id}/files/{path}": {
+      "get": {
+        "tags": ["outputs"],
+        "summary": "Download one retained file",
+        "description": "This is also the endpoint an [A2A](a2a.md) artifact's `url` part points at: A2A defines no download endpoint of its own, so a peer fetches artifacts here with the same bearer token.\n\nPath traversal is refused: the path is confined to the request's own directory.",
+        "operationId": "downloadOutput",
+        "parameters": [
+          { "$ref": "#/components/parameters/OutputsId" },
+          {
+            "name": "path",
+            "in": "path",
+            "required": true,
+            "description": "The file's path relative to the retained directory. May contain `/`.",
+            "schema": { "type": "string" },
+            "examples": { "nested": { "value": "sub/data.json" } }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The file's bytes. Always served as `application/octet-stream`: the relay does not sniff or trust the content type of a file an agent wrote.",
+            "content": {
+              "application/octet-stream": { "schema": { "type": "string", "format": "binary" } }
+            }
+          },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "404": { "$ref": "#/components/responses/OutputsNotFound" }
+        }
+      }
+    },
+    "/health": {
+      "get": {
+        "tags": ["operations"],
+        "summary": "Liveness probe",
+        "description": "The only unauthenticated endpoint besides the A2A Agent Card. It reports that the process is up; it does not probe the backend, and so never spends a token.",
+        "operationId": "health",
+        "security": [],
+        "responses": {
+          "200": {
+            "description": "The relay is up.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": ["status"],
+                  "properties": { "status": { "type": "string", "const": "ok" } }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/metrics": {
+      "get": {
+        "tags": ["operations"],
+        "summary": "Counters",
+        "description": "Process-lifetime counters, including what the relay has spent. Authenticated: the cost and token totals say how much of your subscription has gone through this relay.",
+        "operationId": "metrics",
+        "responses": {
+          "200": {
+            "description": "Counters since start.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "uptime_seconds": { "type": "integer", "format": "int64" },
+                    "requests_total": { "type": "integer", "format": "int64" },
+                    "in_flight": { "type": "integer", "format": "int64" },
+                    "rejected_busy": { "type": "integer", "format": "int64", "description": "Requests refused with 503 because every backend slot was taken." },
+                    "unauthorized": { "type": "integer", "format": "int64" },
+                    "agentic_denied": { "type": "integer", "format": "int64", "description": "Agentic requests refused (disabled, or bad credential)." },
+                    "rate_limited": { "type": "integer", "format": "int64" },
+                    "backend_errors": { "type": "integer", "format": "int64" },
+                    "input_tokens_total": { "type": "integer", "format": "int64" },
+                    "output_tokens_total": { "type": "integer", "format": "int64" },
+                    "cost_usd_total": { "type": "number", "description": "Summed from the backend's reported per-turn cost. Zero for backends that report none (e.g. ollama)." }
+                  }
+                }
+              }
+            }
+          },
+          "401": { "$ref": "#/components/responses/Unauthorized" }
+        }
+      }
+    }
+  },
+  "components": {
+    "securitySchemes": {
+      "bearerAuth": {
+        "type": "http",
+        "scheme": "bearer",
+        "description": "A caller token from `RELAY_TOKENS`. Mandatory on any non-loopback bind — the relay refuses to start otherwise."
+      },
+      "apiKeyAuth": {
+        "type": "apiKey",
+        "in": "header",
+        "name": "x-api-key",
+        "description": "The same token, in the Anthropic SDK's header. Accepted so an unmodified Anthropic client works."
+      }
+    },
+    "parameters": {
+      "AgenticAuthorization": {
+        "name": "X-Agentic-Authorization",
+        "in": "header",
+        "required": false,
+        "description": "Authorizes **this request** to run agentically: the backend agent may read, write and run commands on the relay host, in an ephemeral working directory of its own. A separate credential from the caller token (`RELAY_AGENTIC_TOKENS`), because it grants a categorically different power. Without it the request is plain inference. Every authorized request is audited; every refusal is logged. See [Execution modes](execution-modes.md).",
+        "schema": { "type": "string" },
+        "examples": { "bearer": { "value": "Bearer <agentic-token>" } }
+      },
+      "AgenticKeepOutputs": {
+        "name": "X-Agentic-Keep-Outputs",
+        "in": "header",
+        "required": false,
+        "description": "Retain this agentic request's working directory instead of deleting it, so its files can be fetched afterwards. The id comes back in the `X-Agentic-Outputs` response header. Requires an agentic-authorized request.",
+        "schema": { "type": "string", "enum": ["true"] }
+      },
+      "AgenticOutputs": {
+        "name": "X-Agentic-Outputs",
+        "in": "header",
+        "required": false,
+        "description": "Pin this request to an **existing** retained directory, so it works in the same workspace as an earlier one. This is also what makes `X-Session-Id` usable on an agentic request: the backend keys its sessions by working directory, so resuming needs a stable one.",
+        "schema": { "type": "string", "pattern": "^[0-9a-f]{32}$" }
+      },
+      "SessionId": {
+        "name": "X-Session-Id",
+        "in": "header",
+        "required": false,
+        "description": "Resume the backend's own conversation instead of replaying a transcript. The id is the one a previous response returned in `X-Session-Id`. On an agentic request without a pinned workspace this is refused with 400 rather than failing opaquely in the backend.",
+        "schema": { "type": "string" }
+      },
+      "RequestTimeout": {
+        "name": "X-Request-Timeout",
+        "in": "header",
+        "required": false,
+        "description": "This request's deadline — a long agentic task and a short classification should not share one. Clamped by `RELAY_REQUEST_TIMEOUT` (both the default and the ceiling) rather than refused, and echoed back as applied. Expiry answers 504, not 502, so a client can tell a deadline from a backend failure.",
+        "schema": { "type": "string", "description": "A Go duration.", "examples": ["90s", "5m"] }
+      },
+      "AgentTraces": {
+        "name": "X-Agent-Traces",
+        "in": "header",
+        "required": false,
+        "description": "Surface the backend agent's *own* tool activity as extra SSE events (`agent_tool_use`, `agent_tool_result`). Off by default: these event types are not in the Anthropic wire, and a strict SDK may reject them.",
+        "schema": { "type": "string", "enum": ["true"] }
+      },
+      "OutputsId": {
+        "name": "id",
+        "in": "path",
+        "required": true,
+        "description": "The unguessable id returned in `X-Agentic-Outputs`.",
+        "schema": { "type": "string", "pattern": "^[0-9a-f]{32}$" }
+      }
+    },
+    "headers": {
+      "XRequestId": {
+        "description": "Correlates this response with the relay's access, audit and usage log lines.",
+        "schema": { "type": "string" }
+      },
+      "XSessionId": {
+        "description": "The backend's conversation id. Send it back in `X-Session-Id` to continue this conversation.",
+        "schema": { "type": "string" }
+      },
+      "XAgenticOutputs": {
+        "description": "The id of this request's retained working directory. Fetch its files under `/v1/outputs/{id}`.",
+        "schema": { "type": "string", "pattern": "^[0-9a-f]{32}$" }
+      },
+      "XRequestTimeout": {
+        "description": "The deadline actually applied, after clamping to the operator's ceiling.",
+        "schema": { "type": "string" }
+      },
+      "RetryAfter": {
+        "description": "Seconds to wait before retrying (RFC 9110 §10.2.3).",
+        "schema": { "type": "integer", "minimum": 1 }
+      }
+    },
+    "schemas": {
+      "UpstreamBody": {
+        "type": "object",
+        "additionalProperties": true,
+        "description": "Deliberately unconstrained. The shape is the upstream model API's (Anthropic Messages, or OpenAI Chat Completions) and is specified there; restating it here would create a second source of truth that drifts on every upstream change. Use the official SDK."
+      },
+      "Error": {
+        "type": "object",
+        "description": "The error body carries the wire format of the endpoint that was called: an Anthropic-shaped error on `/v1/messages`, an OpenAI-shaped one on `/v1/chat/completions`. Both nest the human-readable text under `error.message`.",
+        "properties": {
+          "type": { "type": "string" },
+          "error": {
+            "type": "object",
+            "properties": {
+              "type": { "type": "string" },
+              "message": { "type": "string" }
+            }
+          }
+        }
+      }
+    },
+    "responses": {
+      "BadRequest": {
+        "description": "Malformed request, or one asking for something this backend cannot serve — e.g. client-defined `tools[]` on a backend without client-tool support, or resuming a session without a stable workspace.",
+        "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
+      },
+      "Unauthorized": {
+        "description": "Missing or unknown caller token. No backend process is ever spawned for an unauthenticated request.",
+        "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
+      },
+      "AgenticForbidden": {
+        "description": "Agentic execution was asked for and refused: either it is disabled on this relay, or the `X-Agentic-Authorization` credential is not valid.",
+        "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
+      },
+      "RateLimited": {
+        "description": "The caller's own quota (`RELAY_RATE_LIMIT_RPM`) is exhausted. This bounds *spend*; 503 bounds *concurrency*.",
+        "headers": { "Retry-After": { "$ref": "#/components/headers/RetryAfter" } },
+        "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
+      },
+      "BackendError": {
+        "description": "The backend failed. The message is the backend's own error line where it produced one, not a bare exit status.",
+        "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
+      },
+      "Busy": {
+        "description": "Every backend slot (`RELAY_MAX_CONCURRENT`) is taken. The relay refuses rather than queueing, so a caller learns immediately instead of timing out.",
+        "headers": { "Retry-After": { "$ref": "#/components/headers/RetryAfter" } },
+        "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
+      },
+      "Timeout": {
+        "description": "The deadline expired — the caller's `X-Request-Timeout` or the operator's `RELAY_REQUEST_TIMEOUT`. Distinct from 502 on purpose: the backend did not fail, it ran out of time.",
+        "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
+      },
+      "OutputsNotFound": {
+        "description": "Unknown, expired, or malformed outputs id — or an unknown file within it.",
+        "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
+      }
+    }
+  }
+}
