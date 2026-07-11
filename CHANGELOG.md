@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Vision/PDF bridge: base64 `image` and `document` content blocks are
+  accepted on `/v1/messages` (png/jpeg/gif/webp/pdf, 20 MiB decoded per
+  block). The claude backend materializes attachments into a per-request
+  ephemeral working directory and the CLI views them via its read-only Read
+  tool; the directory is removed when the request ends.
+
 ## [0.2.0] - 2026-07-11
 
 ### Added

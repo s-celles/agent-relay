@@ -1,6 +1,7 @@
 package anthropic
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"net/http/httptest"
@@ -9,6 +10,19 @@ import (
 
 	"github.com/s-celles/agent-relay/internal/core"
 )
+
+func TestDecodeRequestFileSizeLimit(t *testing.T) {
+	old := maxFileBytes
+	maxFileBytes = 4
+	defer func() { maxFileBytes = old }()
+
+	body := `{"model":"m","max_tokens":1,"messages":[{"role":"user","content":[
+		{"type":"image","source":{"type":"base64","media_type":"image/png","data":"AAECAwQ="}}
+	]}]}` // 5 decoded bytes > limit of 4
+	if _, err := DecodeRequest(strings.NewReader(body)); err == nil {
+		t.Fatal("oversized file block must be rejected")
+	}
+}
 
 func TestDecodeRequest(t *testing.T) {
 	cases := []struct {
@@ -135,7 +149,41 @@ func TestDecodeRequest(t *testing.T) {
 				},
 			},
 		},
-		{name: "image blocks rejected", body: `{"model":"m","max_tokens":1,"messages":[{"role":"user","content":[{"type":"image","source":{"type":"base64","media_type":"image/png","data":"AA=="}}]}]}`, wantErr: true},
+		{
+			name: "image block decodes to a file block",
+			body: `{"model":"m","max_tokens":1,"messages":[{"role":"user","content":[
+				{"type":"image","source":{"type":"base64","media_type":"image/png","data":"AAEC"}},
+				{"type":"text","text":"describe this"}
+			]}]}`,
+			want: core.InferRequest{
+				Model:     "m",
+				MaxTokens: 1,
+				Messages: []core.Message{
+					{Role: core.RoleUser, Blocks: []core.Block{
+						{Kind: core.BlockFile, MediaType: "image/png", Data: []byte{0x00, 0x01, 0x02}},
+						{Kind: core.BlockText, Text: "describe this"},
+					}},
+				},
+			},
+		},
+		{
+			name: "pdf document block decodes to a file block",
+			body: `{"model":"m","max_tokens":1,"messages":[{"role":"user","content":[
+				{"type":"document","source":{"type":"base64","media_type":"application/pdf","data":"JVBERg=="}}
+			]}]}`,
+			want: core.InferRequest{
+				Model:     "m",
+				MaxTokens: 1,
+				Messages: []core.Message{
+					{Role: core.RoleUser, Blocks: []core.Block{
+						{Kind: core.BlockFile, MediaType: "application/pdf", Data: []byte("%PDF")},
+					}},
+				},
+			},
+		},
+		{name: "url image source rejected", body: `{"model":"m","max_tokens":1,"messages":[{"role":"user","content":[{"type":"image","source":{"type":"url","url":"https://example.com/x.png"}}]}]}`, wantErr: true},
+		{name: "unsupported media type rejected", body: `{"model":"m","max_tokens":1,"messages":[{"role":"user","content":[{"type":"image","source":{"type":"base64","media_type":"image/tiff","data":"AA=="}}]}]}`, wantErr: true},
+		{name: "invalid base64 rejected", body: `{"model":"m","max_tokens":1,"messages":[{"role":"user","content":[{"type":"image","source":{"type":"base64","media_type":"image/png","data":"not base64!!!"}}]}]}`, wantErr: true},
 		{name: "invalid role", body: `{"model":"m","max_tokens":1,"messages":[{"role":"tool","content":"x"}]}`, wantErr: true},
 		{name: "empty messages", body: `{"model":"m","max_tokens":1,"messages":[]}`, wantErr: true},
 		{name: "missing model", body: `{"max_tokens":1,"messages":[{"role":"user","content":"x"}]}`, wantErr: true},
@@ -195,7 +243,8 @@ func assertMessageEqual(t *testing.T, i int, got, want core.Message) {
 	for j, b := range got.Blocks {
 		w := want.Blocks[j]
 		if b.Kind != w.Kind || b.Text != w.Text || b.ToolID != w.ToolID ||
-			b.ToolName != w.ToolName || b.IsError != w.IsError || !jsonEqual(b.ToolInput, w.ToolInput) {
+			b.ToolName != w.ToolName || b.IsError != w.IsError || !jsonEqual(b.ToolInput, w.ToolInput) ||
+			b.MediaType != w.MediaType || !bytes.Equal(b.Data, w.Data) {
 			t.Fatalf("message %d block %d: got %+v, want %+v", i, j, b, w)
 		}
 	}

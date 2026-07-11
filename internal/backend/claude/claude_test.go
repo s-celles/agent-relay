@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -426,6 +427,136 @@ func TestSingleTextMessagePassesThrough(t *testing.T) {
 	if prompt != "just this" {
 		t.Errorf("single user text message must pass through verbatim, got %q", prompt)
 	}
+}
+
+func TestMaterializeFiles(t *testing.T) {
+	// Files land inside the given directory — the subprocess workdir — so the
+	// CLI's Read tool can view them without a permission grant (reads within
+	// the working directory are auto-allowed; outside they are not).
+	b := newTestBackend(t, core.BackendConfig{CLIPath: "claude"}).(*Backend)
+	dir := t.TempDir()
+	pngBytes := []byte{0x89, 0x50, 0x4E, 0x47}
+	req := core.InferRequest{Messages: []core.Message{
+		{Role: core.RoleUser, Blocks: []core.Block{
+			{Kind: core.BlockFile, MediaType: "image/png", Data: pngBytes},
+			{Kind: core.BlockText, Text: "describe this"},
+		}},
+	}}
+
+	got, err := b.materializeFiles(req, dir)
+	if err != nil {
+		t.Fatalf("materializeFiles: %v", err)
+	}
+
+	blocks := got.Messages[0].Blocks
+	if blocks[0].Kind != core.BlockText {
+		t.Fatalf("file block was not rewritten to text: %+v", blocks[0])
+	}
+	ref := blocks[0].Text
+	if !strings.Contains(ref, "file-1.png") || !strings.Contains(ref, "Read") {
+		t.Errorf("reference text should name the file and the Read tool: %q", ref)
+	}
+	path := extractPath(t, ref, `/\S+file-1\.png`)
+	if filepath.Dir(path) != dir {
+		t.Errorf("file %q not inside the workdir %q", path, dir)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("materialized file unreadable: %v", err)
+	}
+	if string(data) != string(pngBytes) {
+		t.Errorf("file content mismatch: %v", data)
+	}
+	if blocks[1].Text != "describe this" {
+		t.Errorf("sibling text block altered: %+v", blocks[1])
+	}
+}
+
+func TestMaterializeFilesNoopWithoutFiles(t *testing.T) {
+	b := newTestBackend(t, core.BackendConfig{CLIPath: "claude"}).(*Backend)
+	req := core.InferRequest{Messages: []core.Message{core.NewTextMessage(core.RoleUser, "hi")}}
+	got, err := b.materializeFiles(req, t.TempDir())
+	if err != nil {
+		t.Fatalf("materializeFiles: %v", err)
+	}
+	if len(got.Messages) != 1 || got.Messages[0].Blocks[0].Text != "hi" {
+		t.Fatalf("noop request altered: %+v", got.Messages)
+	}
+}
+
+func TestInferWithFilesRunsInEphemeralWorkdir(t *testing.T) {
+	// A file-carrying inference request must run with the ephemeral dir as
+	// cwd, so Read is auto-allowed on the materialized files.
+	base := t.TempDir()
+	b := newTestBackend(t, core.BackendConfig{CLIPath: stubCLI(t, cwdScript), Workdir: base})
+	sink := &collectSink{}
+	err := b.Infer(context.Background(), core.InferRequest{
+		Messages: []core.Message{
+			{Role: core.RoleUser, Blocks: []core.Block{
+				{Kind: core.BlockFile, MediaType: "image/png", Data: []byte{1}},
+				{Kind: core.BlockText, Text: "x"},
+			}},
+		},
+	}, sink)
+	if err != nil {
+		t.Fatalf("Infer: %v", err)
+	}
+	var cwd string
+	for _, ev := range sink.events {
+		if ev.Kind == core.EventTextDelta {
+			cwd = ev.Text
+		}
+	}
+	resolvedBase, _ := filepath.EvalSymlinks(base)
+	if cwd == resolvedBase {
+		t.Fatal("file-carrying request ran in the static workdir; Read would need a permission grant")
+	}
+	if filepath.Dir(cwd) != resolvedBase {
+		t.Fatalf("ephemeral cwd %q not under base %q", cwd, resolvedBase)
+	}
+}
+
+func TestInferCleansUpMaterializedFiles(t *testing.T) {
+	// The echoed prompt reveals the materialized path; after Infer returns,
+	// the file must be gone regardless of outcome.
+	script := `
+input=$(cat)
+printf '{"type":"stream_event","event":{"type":"content_block_delta","delta":{"type":"text_delta","text":"%s"}}}\n' "$input" | tr '\n' ' '
+echo
+echo '{"type":"result","subtype":"success","result":"","usage":{"input_tokens":1,"output_tokens":1}}'
+`
+	b := newTestBackend(t, core.BackendConfig{CLIPath: stubCLI(t, script)})
+	sink := &collectSink{}
+	err := b.Infer(context.Background(), core.InferRequest{
+		Messages: []core.Message{
+			{Role: core.RoleUser, Blocks: []core.Block{
+				{Kind: core.BlockFile, MediaType: "application/pdf", Data: []byte("%PDF-1.4")},
+				{Kind: core.BlockText, Text: "summarize"},
+			}},
+		},
+	}, sink)
+	if err != nil {
+		t.Fatalf("Infer: %v", err)
+	}
+	var echoed string
+	for _, ev := range sink.events {
+		if ev.Kind == core.EventTextDelta {
+			echoed += ev.Text
+		}
+	}
+	path := extractPath(t, echoed, `/\S+file-1\.pdf`)
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Fatalf("materialized file %q still exists after Infer", path)
+	}
+}
+
+func extractPath(t *testing.T, s, pattern string) string {
+	t.Helper()
+	m := regexp.MustCompile(pattern).FindString(s)
+	if m == "" {
+		t.Fatalf("no path matching %q in %q", pattern, s)
+	}
+	return m
 }
 
 func TestRegisteredInCore(t *testing.T) {

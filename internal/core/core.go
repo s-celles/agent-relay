@@ -22,11 +22,13 @@ const (
 	BlockText BlockKind = iota
 	BlockToolUse
 	BlockToolResult
+	BlockFile
 )
 
 // Block is one unit of structured message content. Text blocks carry Text;
 // tool_use blocks carry ToolID/ToolName/ToolInput; tool_result blocks carry
-// ToolID plus the flattened result in Text (and IsError).
+// ToolID plus the flattened result in Text (and IsError); file blocks
+// (decoded image/document attachments) carry MediaType and Data.
 type Block struct {
 	Kind      BlockKind
 	Text      string
@@ -34,6 +36,8 @@ type Block struct {
 	ToolName  string
 	ToolInput json.RawMessage
 	IsError   bool
+	MediaType string // BlockFile
+	Data      []byte // BlockFile: decoded bytes
 }
 
 type Message struct {

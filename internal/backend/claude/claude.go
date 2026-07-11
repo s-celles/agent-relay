@@ -12,6 +12,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -126,6 +127,59 @@ func (b *Backend) encodePrompt(req core.InferRequest) string {
 	return sb.String()
 }
 
+var fileExt = map[string]string{
+	"image/png":       ".png",
+	"image/jpeg":      ".jpg",
+	"image/gif":       ".gif",
+	"image/webp":      ".webp",
+	"application/pdf": ".pdf",
+}
+
+func hasFileBlocks(req core.InferRequest) bool {
+	for _, m := range req.Messages {
+		for _, bl := range m.Blocks {
+			if bl.Kind == core.BlockFile {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// materializeFiles writes every BlockFile attachment into dir — which must
+// be the subprocess working directory, because the CLI's read-only Read tool
+// is auto-allowed only within its cwd — and rewrites each block into a text
+// reference to that path. Cleanup is the caller's: dir is the per-request
+// ephemeral directory Infer already removes.
+func (b *Backend) materializeFiles(req core.InferRequest, dir string) (core.InferRequest, error) {
+	n := 0
+	msgs := make([]core.Message, len(req.Messages))
+	for i, m := range req.Messages {
+		blocks := make([]core.Block, len(m.Blocks))
+		for j, bl := range m.Blocks {
+			if bl.Kind != core.BlockFile {
+				blocks[j] = bl
+				continue
+			}
+			n++
+			ext := fileExt[bl.MediaType]
+			if ext == "" {
+				ext = ".bin"
+			}
+			path := filepath.Join(dir, fmt.Sprintf("file-%d%s", n, ext))
+			if err := os.WriteFile(path, bl.Data, 0o600); err != nil {
+				return req, fmt.Errorf("write attachment: %w", err)
+			}
+			blocks[j] = core.Block{Kind: core.BlockText, Text: fmt.Sprintf(
+				"[Attached file (%s) at %s — use your Read tool on that exact path to view it.]",
+				bl.MediaType, path)}
+		}
+		msgs[i] = core.Message{Role: m.Role, Blocks: blocks}
+	}
+	req.Messages = msgs
+	return req, nil
+}
+
 func textOnly(m core.Message) bool {
 	for _, b := range m.Blocks {
 		if b.Kind != core.BlockText {
@@ -168,17 +222,26 @@ func (b *Backend) Infer(ctx context.Context, req core.InferRequest, sink core.Ev
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
+	needFiles := hasFileBlocks(req)
 	workdir := b.workdir
-	if b.agentic.Enabled && req.Agentic {
+	if (b.agentic.Enabled && req.Agentic) || needFiles {
 		// REQ-EXEC-04: agentic requests never share state — each one runs in
 		// its own ephemeral directory (under the configured workdir when set,
 		// the system temp dir otherwise), removed after the process is reaped.
+		// File-carrying requests get the same treatment so the Read tool is
+		// auto-allowed on the materialized attachments (cwd containment).
 		dir, err := os.MkdirTemp(b.workdir, "agent-relay-req-")
 		if err != nil {
 			return fmt.Errorf("create ephemeral workdir: %w", err)
 		}
 		defer os.RemoveAll(dir)
 		workdir = dir
+	}
+	if needFiles {
+		var err error
+		if req, err = b.materializeFiles(req, workdir); err != nil {
+			return err
+		}
 	}
 
 	cmd := exec.CommandContext(ctx, b.cliPath, b.buildArgs(req)...)

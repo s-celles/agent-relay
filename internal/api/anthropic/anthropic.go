@@ -3,6 +3,7 @@
 package anthropic
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -43,6 +44,25 @@ type wireBlock struct {
 	ToolUseID string          `json:"tool_use_id"`
 	Content   json.RawMessage `json:"content"`
 	IsError   bool            `json:"is_error"`
+	Source    *wireSource     `json:"source"`
+}
+
+type wireSource struct {
+	Type      string `json:"type"`
+	MediaType string `json:"media_type"`
+	Data      string `json:"data"`
+}
+
+// maxFileBytes bounds the decoded size of one image/document block (matches
+// the Anthropic API's practical attachment sizes; var for tests).
+var maxFileBytes = 20 << 20
+
+var allowedMediaTypes = map[string]bool{
+	"image/png":       true,
+	"image/jpeg":      true,
+	"image/gif":       true,
+	"image/webp":      true,
+	"application/pdf": true,
 }
 
 // DecodeRequest parses a POST /v1/messages body into a core.InferRequest.
@@ -137,6 +157,12 @@ func decodeBlocks(raw json.RawMessage) ([]core.Block, error) {
 				Text:    text,
 				IsError: b.IsError,
 			})
+		case "image", "document":
+			fb, err := decodeFileBlock(b)
+			if err != nil {
+				return nil, fmt.Errorf("%s block: %w", b.Type, err)
+			}
+			blocks = append(blocks, fb)
 		case "thinking", "redacted_thinking":
 			// Clients echo thinking blocks back per the Messages API contract;
 			// the relay has nothing to do with them — drop silently.
@@ -145,6 +171,28 @@ func decodeBlocks(raw json.RawMessage) ([]core.Block, error) {
 		}
 	}
 	return blocks, nil
+}
+
+// decodeFileBlock turns a base64 image/document block into a neutral file
+// block. Only base64 sources are supported (no URL fetching).
+func decodeFileBlock(b wireBlock) (core.Block, error) {
+	if b.Source == nil || b.Source.Type != "base64" {
+		return core.Block{}, errors.New("only base64 sources are supported")
+	}
+	if !allowedMediaTypes[b.Source.MediaType] {
+		return core.Block{}, fmt.Errorf("unsupported media type %q", b.Source.MediaType)
+	}
+	if base64.StdEncoding.DecodedLen(len(b.Source.Data)) > maxFileBytes {
+		return core.Block{}, fmt.Errorf("attachment exceeds the %d-byte limit", maxFileBytes)
+	}
+	data, err := base64.StdEncoding.DecodeString(b.Source.Data)
+	if err != nil {
+		return core.Block{}, fmt.Errorf("invalid base64 data: %w", err)
+	}
+	if len(data) > maxFileBytes {
+		return core.Block{}, fmt.Errorf("attachment exceeds the %d-byte limit", maxFileBytes)
+	}
+	return core.Block{Kind: core.BlockFile, MediaType: b.Source.MediaType, Data: data}, nil
 }
 
 // toolResultText flattens a tool_result's content (absent, string, or an

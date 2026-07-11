@@ -31,9 +31,10 @@ Request body (v1 supports text content only):
 ```
 
 - `content` may be a string or an array of content blocks. Supported block
-  types: `text`, `tool_use` (assistant turns), and `tool_result` (user
-  turns). `thinking` blocks echoed back by clients are dropped silently.
-  `image` and other block types are rejected with 400.
+  types: `text`, `tool_use` (assistant turns), `tool_result` (user turns),
+  and base64 `image`/`document` blocks (see "Attachments" below).
+  `thinking` blocks echoed back by clients are dropped silently; unknown
+  block types are rejected with 400.
 - Roles are limited to `user` and `assistant`.
 - `max_tokens` is accepted for wire compatibility (the Anthropic format makes
   it mandatory) but **not enforced** by the claude backend — the CLI has no
@@ -53,6 +54,30 @@ Backend failures mid-stream are delivered as an `error` event.
 and token usage. When a backend emits tool calls, responses carry `tool_use`
 blocks (`content_block_start` + `input_json_delta` when streaming) and
 `stop_reason: "tool_use"`.
+
+### Attachments (images and PDFs)
+
+Standard base64 `image` and `document` blocks are accepted — the same shape
+Anthropic SDK clients already send:
+
+```json
+{"type": "image", "source": {"type": "base64", "media_type": "image/png", "data": "<base64>"}}
+{"type": "document", "source": {"type": "base64", "media_type": "application/pdf", "data": "<base64>"}}
+```
+
+Accepted media types: `image/png`, `image/jpeg`, `image/gif`, `image/webp`,
+`application/pdf`; 20 MiB decoded per block; only `base64` sources (no URL
+fetching). On the claude backend this works as a **bridge**: the relay
+decodes each attachment into a per-request ephemeral directory, runs the CLI
+with that directory as its working directory, and replaces the block with a
+text reference that the CLI's read-only Read tool follows to view the file.
+The directory is deleted when the request ends.
+
+Two consequences of the bridge design: viewing is *model-mediated* (the model
+follows the reference; in practice it does, but it is not the structural
+guarantee of native API vision), and a request carrying attachments runs in a
+clean ephemeral directory — it does not see the relay's own working
+directory.
 
 ### Client-defined tools
 

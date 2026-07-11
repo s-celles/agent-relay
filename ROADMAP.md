@@ -36,8 +36,11 @@ What is known to be missing or deferred, relative to the design document
 - [x] **Structured content (wire level).** `tool_use`/`tool_result` blocks,
   `tools[]`, and `tool_choice` now decode on both wire formats; responses can
   carry `tool_use` blocks with streaming `input_json_delta`; the claude
-  backend flattens structured history into its transcript. Image blocks are
-  still rejected.
+  backend flattens structured history into its transcript.
+- [x] **Vision/PDF bridge.** Base64 `image`/`document` blocks are decoded
+  into a per-request ephemeral working directory and viewed via the CLI's
+  read-only Read tool (auto-allowed within its cwd). Model-mediated rather
+  than structurally guaranteed; 20 MiB/block; base64 sources only.
 - [ ] **Client-tool execution.** Even with the wire support above, the
   claude CLI has no raw tool-calling mode (it runs its own agent loop), so
   requests with `tools[]` are rejected with 400 on the claude backend and
