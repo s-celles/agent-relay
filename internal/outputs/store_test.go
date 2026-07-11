@@ -107,6 +107,72 @@ func TestOpenRejectsTraversal(t *testing.T) {
 	}
 }
 
+func TestOpenRefusesSymlinkEscape(t *testing.T) {
+	// The lexical IsLocal check cannot see that a path component is a symlink.
+	// An agentic run with a broad enough toolset can plant one in its own
+	// output dir pointing at a host file the relay uid can read; a later
+	// download must not follow it. Worse, the download endpoint is gated by
+	// the caller token, not the agentic one — so following the link leaks
+	// across the two privilege tiers the design keeps separate.
+	secret := filepath.Join(t.TempDir(), "credentials")
+	if err := os.WriteFile(secret, []byte("SUBSCRIPTION-TOKEN"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	s := newStore(t)
+	id := NewID()
+	dir, _ := s.Create(id)
+
+	// A direct link, and a link nested one directory down.
+	if err := os.Symlink(secret, filepath.Join(dir, "leak")); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+	if err := os.Mkdir(filepath.Join(dir, "sub"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(secret, filepath.Join(dir, "sub", "leak")); err != nil {
+		t.Fatal(err)
+	}
+	// A link to a *directory*, to escape and then descend.
+	if err := os.Symlink(filepath.Dir(secret), filepath.Join(dir, "escape")); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, rel := range []string{"leak", "sub/leak", "escape/credentials"} {
+		f, err := s.Open(id, rel)
+		if err == nil {
+			data, _ := io.ReadAll(f)
+			f.Close()
+			t.Errorf("Open(%q) followed a symlink out of the store and read %q", rel, data)
+		}
+	}
+}
+
+func TestListDoesNotFollowSymlinkedDir(t *testing.T) {
+	// Enumeration must not descend a planted directory symlink and report
+	// host files as if they were retained artifacts.
+	outside := t.TempDir()
+	os.WriteFile(filepath.Join(outside, "host-file"), []byte("x"), 0o600)
+
+	s := newStore(t)
+	id := NewID()
+	dir, _ := s.Create(id)
+	os.WriteFile(filepath.Join(dir, "real.txt"), []byte("x"), 0o600)
+	if err := os.Symlink(outside, filepath.Join(dir, "escape")); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+
+	files, err := s.List(id)
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	for _, f := range files {
+		if f.Path == filepath.Join("escape", "host-file") {
+			t.Errorf("List descended a symlinked dir and exposed %q", f.Path)
+		}
+	}
+}
+
 func TestSweepRemovesOnlyExpired(t *testing.T) {
 	s := newStore(t)
 	oldID, newID := NewID(), NewID()

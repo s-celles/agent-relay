@@ -32,9 +32,15 @@ In **inference mode** the CLI's tools hit a permission wall that nothing in a
 non-interactive subprocess can lift — callers get text, never side effects.
 **Agentic mode** deliberately lifts that wall behind four layers of consent:
 an operator flag, startup guards, an optional per-request credential, and a
-backend re-check. Each agentic request runs isolated in its own throwaway
-directory. The full reasoning, guarantees, and caveats are in
-[docs/execution-modes.md](docs/execution-modes.md).
+backend re-check. These control **who may trigger** agentic execution — they
+are authorization, not containment. The subprocess still runs as your user,
+with your `HOME`, so whatever `RELAY_AGENTIC_ARGS` grants can reach any file
+that user can (including the subscription credentials); the per-request
+throwaway directory isolates requests from each other, not from the host. Real
+containment is OS-level (a dedicated low-privilege account, a filesystem
+namespace, or one container per request) — see
+[Security & threat model](https://github.com/s-celles/agent-relay#security)
+and [docs/execution-modes.md](docs/execution-modes.md).
 
 ## Quick start
 

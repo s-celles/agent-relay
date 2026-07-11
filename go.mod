@@ -1,6 +1,6 @@
 module github.com/s-celles/agent-relay
 
-go 1.25.0
+go 1.25.12
 
 require github.com/a2aproject/a2a-go/v2 v2.3.1
 

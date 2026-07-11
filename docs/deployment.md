@@ -45,6 +45,16 @@ RELAY_TOKENS=$(openssl rand -hex 32) docker compose up -d
 Remember the startup guard: a non-loopback bind without `RELAY_TOKENS`
 refuses to start.
 
+!!! warning "Inside a container, set `RELAY_TOKENS` regardless of `RELAY_BIND`"
+
+    The startup guard reasons about the address the *process* binds. It cannot
+    see the *published* port: `docker run -p 18082:18082` exposes the relay on
+    the host's `0.0.0.0` even though the process bound `127.0.0.1` inside the
+    container and therefore required no token. **Publish to a specific
+    interface and always set a token** — the shipped `docker-compose.yml` does
+    both (`127.0.0.1:18082:18082` and `RELAY_TOKENS=${RELAY_TOKENS:?…}`). The
+    guard protects the bind; the port mapping is yours to get right.
+
 ## Reverse proxy (mandatory off loopback)
 
 The relay speaks plain HTTP and has no per-caller rate limit by design. Off

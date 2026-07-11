@@ -45,6 +45,15 @@ jobs:
       - name: build
         run: go build ./...
 
+      # Fail on any *reachable* known vulnerability — in the standard library
+      # (the toolchain in go.mod governs which stdlib is compiled in) or in the
+      # one dependency. Reachability-based, so an unused-code CVE does not block.
+      - name: govulncheck
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          go install golang.org/x/vuln/cmd/govulncheck@latest
+          "$(go env GOPATH)/bin/govulncheck" ./...
+
       # The Go tests check that the OpenAPI description covers every route;
       # this checks that the description is a valid OpenAPI document.
       - name: validate the OpenAPI description

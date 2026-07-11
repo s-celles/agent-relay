@@ -106,8 +106,13 @@ func (s *Store) List(id string) ([]FileInfo, error) {
 	return files, nil
 }
 
-// Open returns the artifact at the given relative path, confined to the
-// id's directory (path traversal is refused).
+// Open returns the artifact at the given relative path, confined to the id's
+// directory. Confinement is enforced by os.Root, not by a lexical check:
+// filepath.IsLocal rejects ".." and absolute paths but is blind to symlinks,
+// and an agentic run writes freely into its own OutputDir. A planted link
+// (leak -> ~/.claude/.credentials.json) must not be followed out of the store
+// — the more so because this endpoint is gated by the *caller* token, not the
+// agentic one, so following it would leak across the two privilege tiers.
 func (s *Store) Open(id, rel string) (*os.File, error) {
 	dir, err := s.dir(id)
 	if err != nil {
@@ -116,7 +121,14 @@ func (s *Store) Open(id, rel string) (*os.File, error) {
 	if rel == "" || !filepath.IsLocal(rel) {
 		return nil, ErrNotFound
 	}
-	f, err := os.Open(filepath.Join(dir, rel))
+	root, err := os.OpenRoot(dir)
+	if err != nil {
+		return nil, ErrNotFound
+	}
+	defer root.Close()
+	// Root.Open refuses any path that escapes the root, including one that
+	// traverses a symlink partway.
+	f, err := root.Open(rel)
 	if err != nil {
 		return nil, ErrNotFound
 	}

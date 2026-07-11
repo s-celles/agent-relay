@@ -22,6 +22,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
   Migration: rename the header. Responses now carry `X-Relay-Session-Id`.
 
+### Security
+
+- **Symlink escape in the retained-outputs download (CWE-59 → CWE-22).**
+  `Store.Open` guarded against lexical traversal (`filepath.IsLocal`) but
+  `os.Open` still followed symlinks: an agentic run with a broad enough toolset
+  could plant a link in its own output directory pointing at any file the relay
+  user can read (e.g. `~/.claude/.credentials.json`), and a later
+  `GET /v1/outputs/{id}/files/{path}` would stream it. Because that endpoint is
+  gated by the *caller* token rather than the *agentic* token, this crossed the
+  two privilege tiers the design keeps apart. `Open` now confines reads with
+  `os.Root`, which refuses traversal and symlink escape; a regression test
+  plants direct, nested, and directory links and asserts none is followed.
+- **Toolchain bumped to Go 1.25.12**, closing 13 reachable standard-library
+  vulnerabilities (`crypto/tls`, `crypto/x509`, `net/http`, `os`, …) that the
+  `go 1.25.0` directive left compiled in. `govulncheck ./...` is now a CI gate,
+  so a reachable known vulnerability — in the stdlib or the one dependency —
+  fails the build.
+
 ### Fixed
 
 - **Client-defined tools are now served on `/v1/chat/completions`.** They were
