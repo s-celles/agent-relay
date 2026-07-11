@@ -59,11 +59,56 @@ What is known to be missing or deferred, relative to the design document
   to `RELAY_BACKEND`; a route to an unknown backend refuses to start.
   Capabilities are now resolved **per request**, from the backend that will
   actually serve it.
+- [ ] **Antigravity CLI backend (`agy`) — conditional.** Probed at v1.1.1: it
+  is a genuinely *new token source* (Gemini 3.5 / 3.1 Pro, **Claude Sonnet and
+  Opus 4.6**, GPT-OSS 120B — on the Antigravity quota, not your Anthropic
+  subscription), and it supports MCP (`mcpServers` appears in its config
+  surface). But `agy -p` prints **plain buffered text**: no `--output-format`
+  (no hidden flag either — the binary was checked), no streaming (a ten-line
+  answer arrives in a single instant), no usage, no cost, no session id, no
+  tool traces, no structured tool calls. A backend today would report zeros
+  for every counter, would have to fake SSE by emitting the whole answer at
+  once, and could not reuse the MCP tool bridge — nothing would correlate a
+  parked call with its conversation. It would be the most degraded backend
+  here, adding exactly one of the five columns that matter.
+
+  **Condition to revisit:** Antigravity exposing a structured output mode
+  (streaming + usage), as the claude CLI does with `--output-format
+  stream-json`. It is a young CLI that visibly copies claude's conventions, so
+  this is plausible; on that day the adapter becomes trivial and immediately
+  worthwhile.
+
+  *Interim option, if wanted:* a text-only backend (~120 lines) would already
+  serve batch work where neither streaming nor accounting matters
+  (summarization, classification, translation) — at the cost of a third
+  special case in the capability matrix.
 - [ ] **NixOS packaging.** `docs/deployment.md` sketches `buildGoModule` +
   a systemd module; nothing declarative is in-tree.
 - [ ] **Native multi-turn conversations.** History is currently flattened
   to a `Human:`/`Assistant:` transcript on stdin — an approximation the CLI
-  imposes.
+  imposes. (Largely superseded by session continuity: `X-Session-Id` lets the
+  backend keep its own conversation instead of replaying a transcript.)
+
+### The rule for adding a backend
+
+A backend earns its place when it brings a **new source of tokens** you
+already own, or a **new class of capability** the current ones lack. Not to
+"prove the architecture" — Ollama did that. Every adapter is permanent
+surface: CLI drift, tests, docs, one more column in the capability matrix.
+
+By that rule the strongest remaining candidate is a **raw-API backend**
+(Anthropic- or OpenAI-compatible HTTP): it would unlock the whole
+"structurally impossible" list at once — guaranteed structured outputs, exact
+replay and prefill, prompt-cache control, enforced `tool_choice`,
+thinking/effort, `count_tokens`, Batches — at the cost of API billing. Model
+routing already makes it composable: `sonnet` on the subscription for
+everyday work, `sonnet-strict` on the API for jobs that need guarantees.
+
+Agent-CLI wrappers (OpenCode, Aider, Goose, Cline) fail the rule: they are
+agents *on top of* providers, so they add a process and their own opinions
+(system prompt, tools, agent loop) while inheriting the very limitations we
+already fight — and if they authenticate against the same subscription, they
+are strictly redundant with the `claude` backend.
 
 ## Harness engineering
 
