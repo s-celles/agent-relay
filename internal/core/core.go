@@ -25,6 +25,10 @@ type InferRequest struct {
 	Messages  []Message
 	Stream    bool
 	MaxTokens int
+	// Agentic marks a request authorized for host-side agentic execution
+	// (REQ-EXEC-06). Only the server sets it, after per-request
+	// authorization; backends refuse it unless configured for agentic mode.
+	Agentic bool
 }
 
 type EventKind int

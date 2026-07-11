@@ -15,6 +15,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Claude backend: ephemeral per-request working directory in agentic mode
   (REQ-EXEC-04) — created under `RELAY_CLAUDE_WORKDIR` (or the system temp
   dir) and removed when the request ends, isolating concurrent requests.
+- Per-request agentic authorization (REQ-EXEC-06): with
+  `RELAY_AGENTIC_PER_REQUEST_AUTHZ=true`, only requests presenting a valid
+  `X-Agentic-Authorization` credential from `RELAY_AGENTIC_TOKENS` run
+  agentically; others stay inference-only, invalid credentials get 403
+  before any spawn. Backends independently refuse agentic requests they are
+  not configured for.
 
 ### Fixed
 

@@ -4,10 +4,12 @@
 package server
 
 import (
+	"crypto/subtle"
 	"errors"
 	"io"
 	"log/slog"
 	"net/http"
+	"strings"
 
 	"github.com/s-celles/agent-relay/internal/api/anthropic"
 	"github.com/s-celles/agent-relay/internal/api/openai"
@@ -22,9 +24,11 @@ type startedSink interface {
 }
 
 type server struct {
-	dispatcher *core.Dispatcher
-	metrics    *obs.Metrics
-	logger     *slog.Logger
+	dispatcher    *core.Dispatcher
+	metrics       *obs.Metrics
+	logger        *slog.Logger
+	agentic       core.AgenticConfig
+	agenticTokens [][]byte
 }
 
 // Option customizes the server (currently: logger injection).
@@ -46,8 +50,10 @@ func New(cfg config.Config, backend core.Backend, opts ...Option) (http.Handler,
 			Limiter: core.NewLimiter(cfg.MaxConcurrent),
 			Timeout: cfg.RequestTimeout,
 		},
-		metrics: obs.NewMetrics(),
-		logger:  slog.Default(),
+		metrics:       obs.NewMetrics(),
+		logger:        slog.Default(),
+		agentic:       cfg.Agentic,
+		agenticTokens: cfg.AgenticTokens,
 	}
 	for _, o := range opts {
 		o(s)
@@ -71,12 +77,50 @@ func (s *server) handleHealth(w http.ResponseWriter, r *http.Request) {
 	_, _ = io.WriteString(w, `{"status":"ok"}`+"\n")
 }
 
+// authorizeAgentic decides whether this request may run agentically
+// (REQ-EXEC-06). It returns (agentic, ok); when ok is false a 403 has
+// already been written and nothing must be dispatched.
+func (s *server) authorizeAgentic(w http.ResponseWriter, r *http.Request, writeErr func(http.ResponseWriter, int, string)) (bool, bool) {
+	cred := r.Header.Get("X-Agentic-Authorization")
+	if tok, found := strings.CutPrefix(cred, "Bearer "); found {
+		cred = tok
+	}
+
+	switch {
+	case cred == "":
+		// No agentic credential: agentic only in the legacy all-requests
+		// posture (enabled without per-request authz, loopback-only by
+		// Config.Validate); otherwise plain inference.
+		return s.agentic.Enabled && !s.agentic.PerRequestAuthz, true
+	case !s.agentic.Enabled:
+		s.metrics.AgenticDenied()
+		writeErr(w, http.StatusForbidden, "agentic execution is disabled on this relay")
+		return false, false
+	case !s.agentic.PerRequestAuthz:
+		return true, true
+	default:
+		for _, t := range s.agenticTokens {
+			if subtle.ConstantTimeCompare([]byte(cred), t) == 1 {
+				return true, true
+			}
+		}
+		s.metrics.AgenticDenied()
+		writeErr(w, http.StatusForbidden, "invalid agentic authorization")
+		return false, false
+	}
+}
+
 func (s *server) handleMessages(w http.ResponseWriter, r *http.Request) {
 	req, err := anthropic.DecodeRequest(r.Body)
 	if err != nil {
 		anthropic.WriteError(w, http.StatusBadRequest, err.Error())
 		return
 	}
+	agentic, ok := s.authorizeAgentic(w, r, anthropic.WriteError)
+	if !ok {
+		return
+	}
+	req.Agentic = agentic
 	id := "msg_" + obs.NewRequestID()
 	if req.Stream {
 		s.run(w, r, req, anthropic.NewStreamSink(w, id, req.Model), anthropic.WriteError)
@@ -95,6 +139,11 @@ func (s *server) handleChat(w http.ResponseWriter, r *http.Request) {
 		openai.WriteError(w, http.StatusBadRequest, err.Error())
 		return
 	}
+	agentic, ok := s.authorizeAgentic(w, r, openai.WriteError)
+	if !ok {
+		return
+	}
+	req.Agentic = agentic
 	id := "chatcmpl-" + obs.NewRequestID()
 	if req.Stream {
 		s.run(w, r, req, openai.NewStreamSink(w, id, req.Model), openai.WriteError)

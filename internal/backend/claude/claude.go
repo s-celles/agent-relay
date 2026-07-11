@@ -65,7 +65,9 @@ func (b *Backend) buildArgs(req core.InferRequest) []string {
 		"--verbose", "--include-partial-messages",
 	}
 	// REQ-EXEC-02: no permission-bypass flag on the default (inference) path.
-	if b.agentic.Enabled {
+	// Agentic is a per-request property, granted by the server after
+	// per-request authorization (REQ-EXEC-06).
+	if b.agentic.Enabled && req.Agentic {
 		args = append(args, b.agentic.PermissionArgs()...) // opt-in, explicit, logged
 	}
 	if m := b.mapModel(req.Model); m != "" {
@@ -108,11 +110,17 @@ func (b *Backend) encodePrompt(req core.InferRequest) string {
 }
 
 func (b *Backend) Infer(ctx context.Context, req core.InferRequest, sink core.EventSink) error {
+	// Defense in depth: never honor an agentic request unless this backend
+	// was explicitly configured for agentic execution (REQ-EXEC-01/06).
+	if req.Agentic && !b.agentic.Enabled {
+		return fmt.Errorf("agentic request refused: backend %q is not configured for agentic execution", b.Name())
+	}
+
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
 	workdir := b.workdir
-	if b.agentic.Enabled {
+	if b.agentic.Enabled && req.Agentic {
 		// REQ-EXEC-04: agentic requests never share state — each one runs in
 		// its own ephemeral directory (under the configured workdir when set,
 		// the system temp dir otherwise), removed after the process is reaped.

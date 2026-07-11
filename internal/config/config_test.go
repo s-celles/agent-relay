@@ -47,12 +47,17 @@ func TestValidateTruthTable(t *testing.T) {
 			c.Tokens = [][]byte{[]byte("secret")}
 			c.Agentic.Enabled = true
 		}, true},
-		{"agentic on non-loopback with per-request authz is allowed", func(c *Config) {
+		{"agentic on non-loopback with per-request authz and agentic tokens is allowed", func(c *Config) {
 			c.BindAddr = "100.64.0.5:18082"
 			c.Tokens = [][]byte{[]byte("secret")}
 			c.Agentic.Enabled = true
 			c.Agentic.PerRequestAuthz = true
+			c.AgenticTokens = [][]byte{[]byte("agentic-secret")}
 		}, false},
+		{"per-request authz without agentic tokens is refused", func(c *Config) {
+			c.Agentic.Enabled = true
+			c.Agentic.PerRequestAuthz = true
+		}, true},
 		{"empty backend is refused", func(c *Config) { c.Backend = "" }, true},
 		{"zero max concurrent is refused", func(c *Config) { c.MaxConcurrent = 0 }, true},
 		{"empty bind addr is refused", func(c *Config) { c.BindAddr = "" }, true},
@@ -124,6 +129,7 @@ func TestFromEnvParsing(t *testing.T) {
 		"RELAY_CLAUDE_CLI":       "/opt/bin/claude",
 		"RELAY_CLAUDE_MODEL_MAP": "sonnet=claude-sonnet-5,haiku=claude-haiku-4-5",
 		"RELAY_ENV_DENY":         "MY_SECRET,OTHER_SECRET",
+		"RELAY_AGENTIC_TOKENS":   "ag-a,ag-b",
 	}
 	cfg, err := FromEnv(func(k string) string { return env[k] })
 	if err != nil {
@@ -153,6 +159,9 @@ func TestFromEnvParsing(t *testing.T) {
 	}
 	if len(bc.EnvDeny) != 2 || bc.EnvDeny[0] != "MY_SECRET" {
 		t.Errorf("EnvDeny = %v", bc.EnvDeny)
+	}
+	if len(cfg.AgenticTokens) != 2 || string(cfg.AgenticTokens[0]) != "ag-a" || string(cfg.AgenticTokens[1]) != "ag-b" {
+		t.Errorf("AgenticTokens = %q", cfg.AgenticTokens)
 	}
 }
 

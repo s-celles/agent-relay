@@ -76,7 +76,10 @@ Queued ───────────────▶ Starting ─────
 - `stream-json` output is parsed **defensively**: unknown line types and
   unknown fields are ignored, so CLI schema drift degrades gracefully.
 - No permission-bypass flags are ever passed on the default inference path;
-  agentic flags are an explicit operator opt-in.
+  agentic flags are an explicit operator opt-in, and with per-request authz
+  enabled they apply only to requests that presented a valid agentic
+  credential (`InferRequest.Agentic`, set by the server, re-checked by the
+  backend).
 - In agentic mode, every request runs in its own **ephemeral working
   directory** (created under `RELAY_CLAUDE_WORKDIR`, or the system temp dir),
   removed once the subprocess is reaped — concurrent requests never see each

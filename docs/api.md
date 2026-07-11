@@ -61,6 +61,28 @@ Streaming returns `chat.completion.chunk` SSE frames terminated by
 `data: [DONE]`; non-streaming returns a `chat.completion` object with
 `usage`.
 
+## Agentic requests
+
+When the relay runs with `RELAY_AGENTIC_ENABLED=true` and
+`RELAY_AGENTIC_PER_REQUEST_AUTHZ=true`, agentic execution is granted **per
+request**: in addition to the normal caller credential, the request must
+carry a valid agentic credential from `RELAY_AGENTIC_TOKENS`:
+
+```
+X-Agentic-Authorization: Bearer <agentic-token>
+```
+
+- Without the header, the request is served in plain inference mode (no
+  permission flags, no side effects).
+- With an invalid credential — including a caller token, the two sets are
+  never interchangeable — the request is rejected with **403** before any
+  subprocess is spawned.
+- If the header is sent to a relay whose agentic mode is disabled, the
+  response is also 403.
+
+Authorized agentic requests run with the operator-configured permission
+flags, each in its own ephemeral working directory.
+
 ## `GET /health`
 
 Unauthenticated liveness probe: `{"status":"ok"}`.

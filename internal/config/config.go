@@ -21,7 +21,11 @@ type Config struct {
 	MaxConcurrent  int // default 10 (REQ-PROC-02)
 	RequestTimeout time.Duration
 	Agentic        core.AgenticConfig // disabled by default (REQ-EXEC-01)
-	LogLevel       string
+	// AgenticTokens authorize individual requests for agentic execution when
+	// Agentic.PerRequestAuthz is set (REQ-EXEC-06). Keep them distinct from
+	// the caller Tokens.
+	AgenticTokens [][]byte
+	LogLevel      string
 }
 
 // FromEnv builds a Config from environment variables. getenv is injectable
@@ -58,6 +62,9 @@ func FromEnv(getenv func(string) string) (Config, error) {
 		PerRequestAuthz: getenv("RELAY_AGENTIC_PER_REQUEST_AUTHZ") == "true",
 		ExtraArgs:       splitCSV(getenv("RELAY_AGENTIC_ARGS")),
 	}
+	for _, t := range splitCSV(getenv("RELAY_AGENTIC_TOKENS")) {
+		cfg.AgenticTokens = append(cfg.AgenticTokens, []byte(t))
+	}
 
 	modelMap, err := parseModelMap(getenv("RELAY_CLAUDE_MODEL_MAP"))
 	if err != nil {
@@ -87,6 +94,9 @@ func (c Config) Validate() error {
 	}
 	if c.Agentic.Enabled && !isLoopback(c.BindAddr) && !c.Agentic.PerRequestAuthz {
 		return errors.New("refusing agentic mode on non-loopback bind without per-request authz (REQ-EXEC-06)")
+	}
+	if c.Agentic.Enabled && c.Agentic.PerRequestAuthz && len(c.AgenticTokens) == 0 {
+		return errors.New("per-request agentic authz requires RELAY_AGENTIC_TOKENS (REQ-EXEC-06)")
 	}
 	if c.Backend == "" {
 		return errors.New("no backend configured")

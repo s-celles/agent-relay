@@ -15,8 +15,9 @@ import (
 )
 
 type fakeBackend struct {
-	calls atomic.Int64
-	block bool
+	calls       atomic.Int64
+	lastAgentic atomic.Bool
+	block       bool
 }
 
 func (f *fakeBackend) Name() string { return "fake" }
@@ -25,6 +26,7 @@ func (f *fakeBackend) Capabilities() core.Capabilities {
 }
 func (f *fakeBackend) Infer(ctx context.Context, req core.InferRequest, sink core.EventSink) error {
 	f.calls.Add(1)
+	f.lastAgentic.Store(req.Agentic)
 	if f.block {
 		<-ctx.Done()
 		return ctx.Err()
@@ -234,6 +236,100 @@ func TestMetricsRequiresAuthAndReportsCounts(t *testing.T) {
 	}
 	if m.RequestsTotal < 1 {
 		t.Errorf("requests_total = %d, want >= 1", m.RequestsTotal)
+	}
+}
+
+// Per-request agentic authorization (REQ-EXEC-06).
+
+func agenticServer(t *testing.T, fb core.Backend, perRequest bool) http.Handler {
+	t.Helper()
+	return newTestServer(t, fb, func(c *config.Config) {
+		c.Agentic.Enabled = true
+		c.Agentic.PerRequestAuthz = perRequest
+		if perRequest {
+			c.AgenticTokens = [][]byte{[]byte("agentic-secret")}
+		}
+	})
+}
+
+func postMessages(t *testing.T, h http.Handler, headers map[string]string) *httptest.ResponseRecorder {
+	t.Helper()
+	req := httptest.NewRequest("POST", "/v1/messages", strings.NewReader(messagesBody))
+	req.Header.Set("x-api-key", "good-token")
+	for k, v := range headers {
+		req.Header.Set(k, v)
+	}
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	return rec
+}
+
+func TestAgenticPerRequestAuthz(t *testing.T) {
+	fb := &fakeBackend{}
+	h := agenticServer(t, fb, true)
+
+	t.Run("no agentic credential falls back to inference", func(t *testing.T) {
+		rec := postMessages(t, h, nil)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status = %d", rec.Code)
+		}
+		if fb.lastAgentic.Load() {
+			t.Fatal("request without agentic credential must not run agentically")
+		}
+	})
+
+	t.Run("valid agentic credential enables agentic", func(t *testing.T) {
+		rec := postMessages(t, h, map[string]string{"X-Agentic-Authorization": "Bearer agentic-secret"})
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status = %d, body: %s", rec.Code, rec.Body.String())
+		}
+		if !fb.lastAgentic.Load() {
+			t.Fatal("valid agentic credential must enable agentic execution")
+		}
+	})
+
+	t.Run("invalid agentic credential is 403 without spawn", func(t *testing.T) {
+		before := fb.calls.Load()
+		rec := postMessages(t, h, map[string]string{"X-Agentic-Authorization": "Bearer wrong"})
+		if rec.Code != http.StatusForbidden {
+			t.Fatalf("status = %d, want 403", rec.Code)
+		}
+		if fb.calls.Load() != before {
+			t.Fatal("backend must not run on a rejected agentic credential")
+		}
+	})
+
+	t.Run("caller token is not an agentic token", func(t *testing.T) {
+		rec := postMessages(t, h, map[string]string{"X-Agentic-Authorization": "Bearer good-token"})
+		if rec.Code != http.StatusForbidden {
+			t.Fatalf("status = %d, want 403 (credentials must be distinct)", rec.Code)
+		}
+	})
+}
+
+func TestAgenticWithoutPerRequestAuthzAppliesToAll(t *testing.T) {
+	// Legacy loopback posture: agentic on, no per-request authz -> every
+	// request is agentic (Config.Validate keeps this loopback-only).
+	fb := &fakeBackend{}
+	h := agenticServer(t, fb, false)
+	rec := postMessages(t, h, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d", rec.Code)
+	}
+	if !fb.lastAgentic.Load() {
+		t.Fatal("with agentic enabled and no per-request authz, requests run agentically")
+	}
+}
+
+func TestAgenticHeaderRejectedWhenAgenticDisabled(t *testing.T) {
+	fb := &fakeBackend{}
+	h := newTestServer(t, fb) // agentic disabled
+	rec := postMessages(t, h, map[string]string{"X-Agentic-Authorization": "Bearer whatever"})
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, want 403 when agentic mode is disabled", rec.Code)
+	}
+	if fb.calls.Load() != 0 {
+		t.Fatal("backend must not run for a rejected agentic request")
 	}
 }
 

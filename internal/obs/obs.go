@@ -30,6 +30,7 @@ type Metrics struct {
 	inFlight      atomic.Int64
 	rejectedBusy  atomic.Int64
 	unauthorized  atomic.Int64
+	agenticDenied atomic.Int64
 	backendErrors atomic.Int64
 }
 
@@ -39,6 +40,7 @@ func (m *Metrics) RequestStarted()  { m.requestsTotal.Add(1); m.inFlight.Add(1) 
 func (m *Metrics) RequestFinished() { m.inFlight.Add(-1) }
 func (m *Metrics) RejectedBusy()    { m.rejectedBusy.Add(1) }
 func (m *Metrics) Unauthorized()    { m.unauthorized.Add(1) }
+func (m *Metrics) AgenticDenied()   { m.agenticDenied.Add(1) }
 func (m *Metrics) BackendError()    { m.backendErrors.Add(1) }
 
 // Handler serves the metrics snapshot as JSON.
@@ -51,6 +53,7 @@ func (m *Metrics) Handler() http.Handler {
 			"in_flight":      m.inFlight.Load(),
 			"rejected_busy":  m.rejectedBusy.Load(),
 			"unauthorized":   m.unauthorized.Load(),
+			"agentic_denied": m.agenticDenied.Load(),
 			"backend_errors": m.backendErrors.Load(),
 		})
 	})

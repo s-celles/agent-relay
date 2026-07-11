@@ -224,10 +224,11 @@ printf '{"type":"stream_event","event":{"type":"content_block_delta","delta":{"t
 echo '{"type":"result","subtype":"success","result":"","usage":{"input_tokens":1,"output_tokens":1}}'
 `
 
-func reportedCwd(t *testing.T, b core.Backend) string {
+func reportedCwd(t *testing.T, b core.Backend, agentic bool) string {
 	t.Helper()
 	sink := &collectSink{}
 	if err := b.Infer(context.Background(), core.InferRequest{
+		Agentic:  agentic,
 		Messages: []core.Message{{Role: core.RoleUser, Content: "x"}},
 	}, sink); err != nil {
 		t.Fatalf("Infer: %v", err)
@@ -251,8 +252,8 @@ func TestAgenticEphemeralWorkdir(t *testing.T) {
 		Agentic: core.AgenticConfig{Enabled: true},
 	})
 
-	first := reportedCwd(t, b)
-	second := reportedCwd(t, b)
+	first := reportedCwd(t, b, true)
+	second := reportedCwd(t, b, true)
 
 	// The child reports its cwd with symlinks resolved (macOS: /var ->
 	// /private/var), so compare against the resolved base.
@@ -281,6 +282,13 @@ func TestAgenticEphemeralWorkdir(t *testing.T) {
 	if len(entries) != 0 {
 		t.Fatalf("base workdir not clean after requests: %v", entries)
 	}
+
+	// A non-agentic request on the same backend stays in the static base dir
+	// (REQ-EXEC-06: agentic is a per-request property).
+	inferenceCwd := reportedCwd(t, b, false)
+	if inferenceCwd != resolvedBase {
+		t.Fatalf("non-agentic request cwd = %q, want static base %q", inferenceCwd, resolvedBase)
+	}
 }
 
 func TestAgenticEphemeralWorkdirDefaultBase(t *testing.T) {
@@ -290,7 +298,7 @@ func TestAgenticEphemeralWorkdirDefaultBase(t *testing.T) {
 		CLIPath: stubCLI(t, cwdScript),
 		Agentic: core.AgenticConfig{Enabled: true},
 	})
-	dir := reportedCwd(t, b)
+	dir := reportedCwd(t, b, true)
 	relayCwd, _ := os.Getwd()
 	if dir == relayCwd {
 		t.Fatal("agentic request inherited the relay's working directory")
@@ -307,7 +315,7 @@ func TestInferenceWorkdirIsConfiguredDir(t *testing.T) {
 		CLIPath: stubCLI(t, cwdScript),
 		Workdir: base,
 	})
-	got := reportedCwd(t, b)
+	got := reportedCwd(t, b, false)
 	// Resolve symlinks: on macOS t.TempDir() lives under /var -> /private/var.
 	want, _ := filepath.EvalSymlinks(base)
 	gotResolved, _ := filepath.EvalSymlinks(got)
@@ -341,6 +349,40 @@ func TestBuildArgs(t *testing.T) {
 		if strings.Contains(joined, forbidden) {
 			t.Errorf("args %q must not contain %q in inference mode", joined, forbidden)
 		}
+	}
+}
+
+func TestBuildArgsAgenticPerRequest(t *testing.T) {
+	// Permission args are applied per request, not per backend (REQ-EXEC-06).
+	b := newTestBackend(t, core.BackendConfig{
+		CLIPath: "claude",
+		Agentic: core.AgenticConfig{Enabled: true, ExtraArgs: []string{"--permission-mode", "acceptEdits"}},
+	}).(*Backend)
+
+	plain := strings.Join(b.buildArgs(core.InferRequest{Model: "m"}), " ")
+	if strings.Contains(plain, "--permission-mode") {
+		t.Errorf("non-agentic request got permission args: %q", plain)
+	}
+	agentic := strings.Join(b.buildArgs(core.InferRequest{Model: "m", Agentic: true}), " ")
+	if !strings.Contains(agentic, "--permission-mode acceptEdits") {
+		t.Errorf("agentic request missing permission args: %q", agentic)
+	}
+}
+
+func TestInferRejectsAgenticWhenDisabled(t *testing.T) {
+	// Defense in depth: even if the server mislabels a request, a backend not
+	// configured for agentic execution must refuse it without spawning.
+	b := newTestBackend(t, core.BackendConfig{CLIPath: "/nonexistent/claude-cli"})
+	sink := &collectSink{}
+	err := b.Infer(context.Background(), core.InferRequest{
+		Agentic:  true,
+		Messages: []core.Message{{Role: core.RoleUser, Content: "x"}},
+	}, sink)
+	if err == nil {
+		t.Fatal("agentic request on a non-agentic backend must fail")
+	}
+	if strings.Contains(err.Error(), "spawn") {
+		t.Fatalf("request must be refused before spawning, got: %v", err)
 	}
 }
 
