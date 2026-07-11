@@ -188,9 +188,13 @@ func TestInferReportsSpawnFailure(t *testing.T) {
 }
 
 func TestInferReportsBackendError(t *testing.T) {
+	// The real CLI exits 1 after an error result line; the parsed error event
+	// must win over the bare exit status, so Infer returns nil here and the
+	// sink carries the useful message.
 	script := `
 cat > /dev/null
 echo '{"type":"result","subtype":"error_during_execution","is_error":true,"result":"boom"}'
+exit 1
 `
 	b := newTestBackend(t, core.BackendConfig{CLIPath: stubCLI(t, script)})
 	sink := &collectSink{}

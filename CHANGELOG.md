@@ -11,6 +11,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - AGPL-3.0-or-later license.
 
+### Fixed
+
+- Claude backend: when the CLI reports an error result line (e.g. "Credit
+  balance is too low") and then exits non-zero, the parsed error message is
+  now surfaced to the client instead of being masked by the bare
+  "backend exited: exit status 1".
+
 ## [0.1.0] - 2026-07-11
 
 ### Added
