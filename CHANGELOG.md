@@ -9,6 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `SECURITY.md`: security policy and threat model — assets, trust
+  boundaries, what the relay does and does not defend against, why a
+  TLS-terminating reverse proxy is mandatory off loopback, the security
+  (not merely contractual) risks of sharing a caller token, ranked
+  deployment postures, and private vulnerability reporting. Rendered on the
+  documentation site and linked from the README, deployment, and
+  execution-modes pages; `docs/deployment.md` gains Caddy and
+  `tailscale serve` reverse-proxy examples.
 - Agentic output retrieval: `X-Agentic-Keep-Outputs: true` on an
   agentic-authorized request retains its working directory under an
   unguessable id (`X-Agentic-Outputs` response header); new endpoints

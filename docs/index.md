@@ -34,8 +34,17 @@ curl -N http://127.0.0.1:18082/v1/messages \
        "messages":[{"role":"user","content":"hello"}]}'
 ```
 
+!!! warning "Read the threat model before exposing the relay"
+
+    The relay speaks plain HTTP, runs the CLI as your OS user, and can be
+    granted the right to write files and run commands. Off loopback, a
+    TLS-terminating reverse proxy is **mandatory**, and a shared caller token
+    means a shared identity. See
+    [Security & threat model](security.md).
+
 ## Reading guide
 
+- [Security & threat model](security.md) — risks, trust boundaries, deployment postures
 - [Architecture](architecture.md) — the three-layer pipeline and neutral model
 - [Execution modes](execution-modes.md) — inference vs agentic, in depth
 - [Configuration](configuration.md) — environment variables and startup guards

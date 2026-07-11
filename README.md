@@ -51,8 +51,18 @@ curl -N http://127.0.0.1:18082/v1/messages \
        "messages":[{"role":"user","content":"hello"}]}'
 ```
 
+## Security
+
+**Read [SECURITY.md](SECURITY.md) before exposing the relay off loopback.**
+It states the threat model, the trust boundaries, what the relay does *not*
+defend against (TLS, sandboxing, prompt injection, per-caller quotas), why a
+TLS-terminating reverse proxy is mandatory off loopback, and why sharing a
+caller token means sharing your identity, your subscription's reputation, and
+— in agentic mode — your host.
+
 ## Documentation
 
+- [Security & threat model](SECURITY.md) — risks, boundaries, deployment postures
 - [Architecture](docs/architecture.md) — the three-layer pipeline and neutral model
 - [Execution modes](docs/execution-modes.md) — inference vs agentic, in depth
 - [Configuration](docs/configuration.md) — environment variables and startup guards

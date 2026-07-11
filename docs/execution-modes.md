@@ -92,7 +92,10 @@ the relay's OS user, with that user's privileges, network access, and home
 directory. `acceptEdits` confines *writes* to the ephemeral directory, but
 broader grants (Bash, bypass) mean arbitrary code execution as that user.
 Run agentic relays in a container (or a dedicated unprivileged user) and
-keep them on loopback or a trusted private network.
+keep them on loopback or a trusted private network. Prompt injection is a
+live concern here — the model chooses its tool calls from input that may
+include files it reads or pages it fetches. See the
+[security & threat model](security.md) for the full picture.
 
 ## Side-by-side
 

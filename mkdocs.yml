@@ -27,6 +27,7 @@ theme:
 
 nav:
   - Home: index.md
+  - Security & threat model: security.md
   - Architecture: architecture.md
   - Execution modes: execution-modes.md
   - Configuration: configuration.md
@@ -40,3 +41,6 @@ markdown_extensions:
   - tables
   - pymdownx.highlight
   - pymdownx.superfences
+  # Lets docs/security.md include the root SECURITY.md (single source of truth).
+  - pymdownx.snippets:
+      base_path: ["."]
