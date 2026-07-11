@@ -11,6 +11,7 @@
 !**/*.go
 
 # Documentation
+!LICENSE
 !README.md
 !CHANGELOG.md
 !docs/**
