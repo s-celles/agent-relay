@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "agent-relay",
-    "version": "0.9.1",
+    "version": "0.9.2",
     "summary": "The relay's own HTTP contract — not a re-specification of the model APIs.",
     "description": "This document describes **what the relay adds**, and deliberately not what it merely proxies.\n\nThe request and response bodies of `/v1/messages` and `/v1/chat/completions` are those of the **Anthropic Messages API** and the **OpenAI Chat Completions API**; they are specified upstream, implemented by the official SDKs, and are not restated here (re-deriving them would create a second source of truth that silently drifts). What *is* specified here is the part only this relay defines: the authentication, the `X-Agentic-*` / `X-Relay-Session-Id` / `X-Request-Timeout` header contract, the backpressure and timeout status codes, and the retained-outputs endpoints.\n\n**Out of scope on purpose:** the Agent2Agent surface (`POST /a2a`, `GET /.well-known/agent-card.json`). A2A is self-describing — its Agent Card *is* the machine-readable contract, and its normative schema is the A2A protobuf. Describing it a third time here is exactly how the upstream specification acquired the inconsistencies recorded in `upstream-bugs.md`. See [Agent2Agent](a2a.md).\n\nA test (`internal/server/openapi_test.go`) holds this document against the routes the server actually registers, so an endpoint cannot be added, moved, or removed without this file failing the build.",
     "license": {

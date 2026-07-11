@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.2] - 2026-07-12
+
 ### Added
 
 - **Agent harness**: `AGENTS.md` (feedback loop, code map, conventions, hard
