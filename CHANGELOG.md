@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Agent harness**: `AGENTS.md` (feedback loop, code map, conventions, hard
+  limits for coding agents), a fast `just precommit` recipe for the inner
+  loop (`just check` remains the full pre-commit gate), and `opencode.json`
+  permission rules denying token-file access, force-pushes, and
+  token-spending recipes without confirmation.
+
 ## [0.9.1] - 2026-07-11
 
 ### Added

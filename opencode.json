@@ -1,0 +1,23 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "permission": {
+    "read": {
+      ".relay-token*": "deny",
+      "**/.relay-token*": "deny"
+    },
+    "edit": {
+      ".relay-token*": "deny",
+      ".gitignore": "ask"
+    },
+    "bash": {
+      "git push --force*": "deny",
+      "git push -f*": "deny",
+      "*relay-token*": "deny",
+      "just print-token*": "deny",
+      "just new-token*": "deny",
+      "just smoke*": "ask",
+      "just interop*": "ask",
+      "just tools-check*": "ask"
+    }
+  }
+}

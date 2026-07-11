@@ -5,6 +5,11 @@
 # Repository meta
 !.gitignore
 
+# Agent harness
+!AGENTS.md
+!opencode.json
+!justfile
+
 # Go module
 !go.mod
 !go.sum
