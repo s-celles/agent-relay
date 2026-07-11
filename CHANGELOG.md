@@ -23,6 +23,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   not configured for.
 - `docs/execution-modes.md`: in-depth explanation of inference vs agentic
   mode (enforcement, guarantees, caveats), summarized in the README.
+- `ROADMAP.md`: known gaps and deferred features relative to the design
+  document.
 
 ### Fixed
 
