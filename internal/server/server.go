@@ -92,9 +92,32 @@ func (s *server) checkTools(w http.ResponseWriter, req core.InferRequest, writeE
 	return false
 }
 
+// auditAgentic emits the one-per-request audit line for agentic execution
+// ("opt-in, explicit, logged"). The id is the X-Request-Id response header
+// already stamped by obs.WithRequestID, so audit lines correlate with the
+// per-request access log and the caller's response.
+func (s *server) auditAgentic(w http.ResponseWriter, r *http.Request) {
+	s.logger.Info("agentic request authorized",
+		"id", w.Header().Get("X-Request-Id"),
+		"path", r.URL.Path,
+	)
+}
+
+// denyAgentic records a rejected agentic attempt: counter plus a Warn log
+// line carrying the same correlation fields as the audit line.
+func (s *server) denyAgentic(w http.ResponseWriter, r *http.Request, reason string) {
+	s.metrics.AgenticDenied()
+	s.logger.Warn("agentic request denied",
+		"id", w.Header().Get("X-Request-Id"),
+		"path", r.URL.Path,
+		"reason", reason,
+	)
+}
+
 // authorizeAgentic decides whether this request may run agentically
 // (REQ-EXEC-06). It returns (agentic, ok); when ok is false a 403 has
-// already been written and nothing must be dispatched.
+// already been written and nothing must be dispatched. Every authorized
+// agentic request is audited at Info, every rejection logged at Warn.
 func (s *server) authorizeAgentic(w http.ResponseWriter, r *http.Request, writeErr func(http.ResponseWriter, int, string)) (bool, bool) {
 	cred := r.Header.Get("X-Agentic-Authorization")
 	if tok, found := strings.CutPrefix(cred, "Bearer "); found {
@@ -106,20 +129,26 @@ func (s *server) authorizeAgentic(w http.ResponseWriter, r *http.Request, writeE
 		// No agentic credential: agentic only in the legacy all-requests
 		// posture (enabled without per-request authz, loopback-only by
 		// Config.Validate); otherwise plain inference.
-		return s.agentic.Enabled && !s.agentic.PerRequestAuthz, true
+		if s.agentic.Enabled && !s.agentic.PerRequestAuthz {
+			s.auditAgentic(w, r)
+			return true, true
+		}
+		return false, true
 	case !s.agentic.Enabled:
-		s.metrics.AgenticDenied()
+		s.denyAgentic(w, r, "agentic execution disabled")
 		writeErr(w, http.StatusForbidden, "agentic execution is disabled on this relay")
 		return false, false
 	case !s.agentic.PerRequestAuthz:
+		s.auditAgentic(w, r)
 		return true, true
 	default:
 		for _, t := range s.agenticTokens {
 			if subtle.ConstantTimeCompare([]byte(cred), t) == 1 {
+				s.auditAgentic(w, r)
 				return true, true
 			}
 		}
-		s.metrics.AgenticDenied()
+		s.denyAgentic(w, r, "invalid credential")
 		writeErr(w, http.StatusForbidden, "invalid agentic authorization")
 		return false, false
 	}

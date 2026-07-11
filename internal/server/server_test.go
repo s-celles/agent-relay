@@ -1,8 +1,10 @@
 package server
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -331,6 +333,144 @@ func TestAgenticHeaderRejectedWhenAgenticDisabled(t *testing.T) {
 	}
 	if fb.calls.Load() != 0 {
 		t.Fatal("backend must not run for a rejected agentic request")
+	}
+}
+
+// Agentic audit trail: authorized agentic requests are logged at Info,
+// rejected agentic credentials at Warn, both correlated by X-Request-Id.
+
+// newAuditServer builds a server whose logger writes JSON lines to the
+// returned buffer, so tests can assert on structured log output.
+func newAuditServer(t *testing.T, fb core.Backend, mutate ...func(*config.Config)) (http.Handler, *bytes.Buffer) {
+	t.Helper()
+	cfg := config.Config{
+		BindAddr:       "127.0.0.1:0",
+		Tokens:         [][]byte{[]byte("good-token")},
+		Backend:        "fake",
+		MaxConcurrent:  2,
+		RequestTimeout: 5 * time.Second,
+	}
+	for _, m := range mutate {
+		m(&cfg)
+	}
+	buf := &bytes.Buffer{}
+	h, err := New(cfg, fb, WithLogger(slog.New(slog.NewJSONHandler(buf, nil))))
+	if err != nil {
+		t.Fatalf("server.New: %v", err)
+	}
+	return h, buf
+}
+
+// logLines returns every JSON log record in buf whose msg field matches.
+func logLines(t *testing.T, buf *bytes.Buffer, msg string) []map[string]any {
+	t.Helper()
+	var out []map[string]any
+	for _, line := range strings.Split(strings.TrimSpace(buf.String()), "\n") {
+		if line == "" {
+			continue
+		}
+		var rec map[string]any
+		if err := json.Unmarshal([]byte(line), &rec); err != nil {
+			t.Fatalf("log line is not JSON: %q: %v", line, err)
+		}
+		if rec["msg"] == msg {
+			out = append(out, rec)
+		}
+	}
+	return out
+}
+
+func agenticPerRequest(c *config.Config) {
+	c.Agentic.Enabled = true
+	c.Agentic.PerRequestAuthz = true
+	c.AgenticTokens = [][]byte{[]byte("agentic-secret")}
+}
+
+func TestAgenticAuthorizedRequestIsAudited(t *testing.T) {
+	t.Run("per-request authz", func(t *testing.T) {
+		h, buf := newAuditServer(t, &fakeBackend{}, agenticPerRequest)
+		rec := postMessages(t, h, map[string]string{"X-Agentic-Authorization": "Bearer agentic-secret"})
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status = %d, body: %s", rec.Code, rec.Body.String())
+		}
+		lines := logLines(t, buf, "agentic request authorized")
+		if len(lines) != 1 {
+			t.Fatalf("audit lines = %d, want exactly 1 (log: %s)", len(lines), buf.String())
+		}
+		entry := lines[0]
+		if entry["level"] != "INFO" {
+			t.Errorf("level = %v, want INFO", entry["level"])
+		}
+		wantID := rec.Header().Get("X-Request-Id")
+		if wantID == "" || entry["id"] != wantID {
+			t.Errorf("id = %v, want X-Request-Id header %q", entry["id"], wantID)
+		}
+		if entry["path"] != "/v1/messages" {
+			t.Errorf("path = %v, want /v1/messages", entry["path"])
+		}
+	})
+
+	t.Run("legacy all-requests posture", func(t *testing.T) {
+		h, buf := newAuditServer(t, &fakeBackend{}, func(c *config.Config) {
+			c.Agentic.Enabled = true
+		})
+		rec := postMessages(t, h, nil)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status = %d", rec.Code)
+		}
+		if got := len(logLines(t, buf, "agentic request authorized")); got != 1 {
+			t.Fatalf("audit lines = %d, want exactly 1 (log: %s)", got, buf.String())
+		}
+	})
+}
+
+func TestPlainInferenceRequestIsNotAudited(t *testing.T) {
+	t.Run("agentic disabled", func(t *testing.T) {
+		h, buf := newAuditServer(t, &fakeBackend{})
+		rec := postMessages(t, h, nil)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status = %d", rec.Code)
+		}
+		if got := len(logLines(t, buf, "agentic request authorized")); got != 0 {
+			t.Fatalf("audit lines = %d, want 0 for plain inference", got)
+		}
+	})
+
+	t.Run("no credential falls back to inference", func(t *testing.T) {
+		h, buf := newAuditServer(t, &fakeBackend{}, agenticPerRequest)
+		rec := postMessages(t, h, nil)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status = %d", rec.Code)
+		}
+		if got := len(logLines(t, buf, "agentic request authorized")); got != 0 {
+			t.Fatalf("audit lines = %d, want 0 for inference fallback", got)
+		}
+	})
+}
+
+func TestRejectedAgenticCredentialIsLoggedAtWarn(t *testing.T) {
+	h, buf := newAuditServer(t, &fakeBackend{}, agenticPerRequest)
+	rec := postMessages(t, h, map[string]string{"X-Agentic-Authorization": "Bearer wrong"})
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, want 403", rec.Code)
+	}
+	lines := logLines(t, buf, "agentic request denied")
+	if len(lines) != 1 {
+		t.Fatalf("denial lines = %d, want exactly 1 (log: %s)", len(lines), buf.String())
+	}
+	entry := lines[0]
+	if entry["level"] != "WARN" {
+		t.Errorf("level = %v, want WARN", entry["level"])
+	}
+	wantID := rec.Header().Get("X-Request-Id")
+	if wantID == "" || entry["id"] != wantID {
+		t.Errorf("id = %v, want X-Request-Id header %q", entry["id"], wantID)
+	}
+	if entry["path"] != "/v1/messages" {
+		t.Errorf("path = %v, want /v1/messages", entry["path"])
+	}
+	if got := len(logLines(t, buf, "agentic request authorized")); got != 0 {
+		t.Fatalf("rejected request must not also be logged as authorized (%d lines)", got)
 	}
 }
 

@@ -72,6 +72,17 @@ can say no:
   directory — anything you want to keep must be returned in the response
   text.
 
+**Audit trail**: agentic execution is not just opt-in but logged, per
+request. Every request that is actually authorized to run agentically emits
+exactly one structured log line (`agentic request authorized`, level Info)
+carrying the request id — the same value returned to the caller in the
+`X-Request-Id` response header — and the request path, so agentic activity
+can be correlated with responses and reviewed after the fact. Rejected
+agentic attempts (agentic disabled, or an invalid `X-Agentic-Authorization`
+credential) are logged at level Warn (`agentic request denied`) with the
+same correlation fields plus a `reason`, in addition to incrementing the
+`agentic_denied` metric.
+
 **What agentic mode does *not* provide**: a sandbox. The subprocess runs as
 the relay's OS user, with that user's privileges, network access, and home
 directory. `acceptEdits` confines *writes* to the ephemeral directory, but
