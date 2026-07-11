@@ -34,6 +34,7 @@ nav:
   - Configuration: configuration.md
   - HTTP API: api.md
   - Agent2Agent (A2A): a2a.md
+  - Multi-agent example: multiagent.md
   - OpenAPI description: openapi.md
   - API vs relay limitations: limitations.md
   - Deployment: deployment.md
