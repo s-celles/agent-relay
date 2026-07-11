@@ -1,0 +1,20 @@
+# Allowlist pattern: ignore everything, explicitly re-include tracked files.
+*
+!*/
+
+# Repository meta
+!.gitignore
+
+# Go module
+!go.mod
+!go.sum
+!**/*.go
+
+# Documentation
+!README.md
+!CHANGELOG.md
+!docs/**
+
+# Deployment
+!Dockerfile
+!docker-compose.yml
