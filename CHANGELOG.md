@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Client-defined tools were never actually invoked by the claude CLI.** When
+  a caller supplied `tools[]`, the relay exposed them over MCP but left the
+  CLI's own built-in toolset enabled — and the model prefers its native
+  `Write`/`Read`/`Bash` over an MCP tool of the same purpose. So the caller's
+  tools never fired: the model would narrate *"I need your permission to write
+  the file"* instead of calling the tool. Worse, if a permission mode were
+  granted, the native tool ran on the **relay host** rather than routing back to
+  the caller. The bridge now disables the built-in toolset (`--tools ""`) when
+  client tools are supplied, so every tool call goes through the caller's tools
+  — the raw-model contract an agent client (OpenCode, LangChain, …) expects.
+  Verified end to end: the model now returns a `tool_use` for the caller's tool
+  and writes nothing on the host.
+
 ### Changed
 
 - **The claude backend now denies `ANTHROPIC_API_KEY` and `ANTHROPIC_AUTH_TOKEN`

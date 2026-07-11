@@ -477,10 +477,33 @@ func TestBuildArgsToolBridge(t *testing.T) {
 			t.Errorf("tool requests must stay inference-mode; args contain %q: %q", forbidden, joined)
 		}
 	}
+	// The built-in toolset must be turned off (`--tools ""`). Otherwise the
+	// model prefers its own native Write/Read over the caller's MCP tools — the
+	// caller's tools never fire, and a granted permission would run the native
+	// ones on the relay host instead of routing back to the caller.
+	if !hasFlagValue(args, "--tools", "") {
+		t.Errorf("client-tool requests must disable the built-in toolset with --tools \"\": %q", joined)
+	}
 	// No bridge, no flags.
-	if strings.Contains(strings.Join(b.buildArgs(core.InferRequest{Model: "m"}), " "), "--mcp-config") {
+	plain := b.buildArgs(core.InferRequest{Model: "m"})
+	if strings.Contains(strings.Join(plain, " "), "--mcp-config") {
 		t.Error("--mcp-config must not appear without a tool bridge")
 	}
+	if hasFlagValue(plain, "--tools", "") {
+		t.Error("--tools must not be forced when the caller supplied no tools")
+	}
+}
+
+// hasFlagValue reports whether args contains flag immediately followed by
+// value — the reliable way to assert an empty-string argument, which vanishes
+// when args are joined for display.
+func hasFlagValue(args []string, flag, value string) bool {
+	for i, a := range args {
+		if a == flag && i+1 < len(args) && args[i+1] == value {
+			return true
+		}
+	}
+	return false
 }
 
 func TestBuildArgsResume(t *testing.T) {

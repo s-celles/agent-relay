@@ -92,10 +92,20 @@ func (b *Backend) buildArgs(req core.InferRequest) []string {
 		args = append(args, "--resume", req.SessionID)
 	}
 	// Client-defined tools reach the CLI as an MCP server the relay hosts.
-	// --allowedTools is an allowlist limited to those tools: the CLI's own
-	// Write/Bash stay unpermitted, so this remains an inference-mode request.
+	//
+	//   --tools "" turns off the CLI's entire built-in toolset. Without it the
+	//   model has both the caller's MCP tools and its own native Write/Read/
+	//   Bash, and it prefers the native ones — so the caller's tools never fire
+	//   (the model just narrates), and a granted permission would run the
+	//   native tools on the relay host instead of routing back to the caller.
+	//   Disabling them forces every call through the caller's tools, which is
+	//   the raw-model contract an agent client (OpenCode, LangChain, …) expects.
+	//
+	//   --allowedTools then pre-approves those MCP tools by name, so the CLI
+	//   invokes them without a permission prompt.
 	if tb := req.ToolBridge; tb != nil && len(tb.AllowedTools) > 0 {
 		args = append(args,
+			"--tools", "",
 			"--mcp-config", tb.Config,
 			"--allowedTools", strings.Join(tb.AllowedTools, ","),
 		)

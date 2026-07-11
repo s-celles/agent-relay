@@ -112,20 +112,30 @@ while resp.stop_reason == "tool_use":
 **How it works.** The claude CLI has no raw tool-calling mode — but it speaks
 MCP. So the relay hosts a small MCP server exposing *your* tools and points
 the CLI at it (`--mcp-config`, with `--allowedTools` restricted to those tool
-names). When the model calls one, the MCP handler **parks**: the relay
-answers your HTTP request with the `tool_use` block while the subprocess
-stays alive and blocked. Your next request carries the `tool_result`, which
-resolves the parked call and the same subprocess resumes — one CLI run serves
-the whole loop, preserving its context.
+names). Crucially, it also disables the CLI's entire **built-in** toolset
+(`--tools ""`): otherwise the model has both your tools and its own native
+`Write`/`Read`/`Bash`, and it prefers the native ones — so your tools would
+never fire (the model just narrates), and any granted permission would run the
+native tools on the *relay host* instead of routing back to you. With the
+built-ins off, every tool call goes through your tools, which is the raw-model
+contract an agent client expects.
+
+When the model calls one, the MCP handler **parks**: the relay answers your
+HTTP request with the `tool_use` block while the subprocess stays alive and
+blocked. Your next request carries the `tool_result`, which resolves the parked
+call and the same subprocess resumes — one CLI run serves the whole loop,
+preserving its context.
 
 Consequences worth knowing:
 
 - **A parked conversation holds a concurrency slot** (the subprocess is
   alive). It is torn down after `RELAY_REQUEST_TIMEOUT` if you never return a
   result, so an abandoned loop cannot leak a process.
-- The allowlist granted to the CLI contains **only your tools** — its own
-  Write/Bash stay unpermitted, so a tool request remains an inference-mode
-  request with no host side effects.
+- The CLI is given **only your tools** and none of its own, so a tool request
+  has no host side effects — every action is one your code executes, on your
+  machine. This is what lets an agent client (OpenCode, LangChain, …) drive the
+  relay: it supplies its toolset and the model works within it, exactly as
+  against the raw API.
 - The MCP endpoint listens on its **own loopback socket**, never on the
   relay's public bind, and each session carries an unguessable id plus a
   bearer token.
