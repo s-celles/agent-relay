@@ -160,6 +160,44 @@ with an empty `choices` array carries `usage` just before `[DONE]`, as the
 OpenAI API does. Non-streaming returns a `chat.completion` object with
 `usage`.
 
+**Client-defined tools work here too.** `tools[]` is served by the same [MCP
+bridge](#client-defined-tools) as on the Anthropic wire: the model's call comes
+back as `message.tool_calls[]` with `finish_reason: "tool_calls"`, and you
+return the result as a `{"role": "tool", "tool_call_id": …}` message — the
+standard OpenAI tool loop. (Until v0.9.0 this wire accepted `tools[]` and then
+silently dropped them, so the model never saw them.)
+
+## Using the relay from an agent client
+
+Agent CLIs and frameworks that speak either wire can point at the relay. For
+[OpenCode](https://opencode.ai), declare it as a custom provider in
+`opencode.json` — use the **Anthropic** wire, which is where the tool loop is
+best exercised:
+
+```json
+{
+  "$schema": "https://opencode.ai/config.json",
+  "provider": {
+    "agent-relay": {
+      "npm": "@ai-sdk/anthropic",
+      "name": "agent-relay",
+      "options": {
+        "baseURL": "http://127.0.0.1:18082/v1",
+        "apiKey": "{env:RELAY_TOKEN}"
+      },
+      "models": {
+        "sonnet": { "name": "Sonnet (relay)", "limit": { "context": 200000, "output": 64000 } },
+        "haiku":  { "name": "Haiku (relay)",  "limit": { "context": 200000, "output": 64000 } }
+      }
+    }
+  }
+}
+```
+
+Then `RELAY_TOKEN=… opencode run --model agent-relay/haiku "…"`. The agent's own
+tools (read, edit, bash…) are executed by the *client*, on your machine, through
+the relay's tool loop — the relay stays in inference mode and touches nothing.
+
 ## Agentic requests
 
 When the relay runs with `RELAY_AGENTIC_ENABLED=true` and
@@ -208,7 +246,7 @@ subprocess is killed with its process group; nothing is left running.
 Every response carries the backend's conversation id:
 
 ```
-X-Session-Id: 133cc414-ce5e-4b5a-80ca-3997e1ce9641
+X-Relay-Session-Id: 133cc414-ce5e-4b5a-80ca-3997e1ce9641
 ```
 
 Send it back on a later request to **resume** that conversation: the backend
@@ -216,13 +254,13 @@ keeps its context (and its prompt cache) instead of starting fresh, and the
 relay does not have to replay the history as a flattened transcript.
 
 ```sh
-# turn 1 — note the X-Session-Id in the response headers
+# turn 1 — note the X-Relay-Session-Id in the response headers
 curl -D- http://127.0.0.1:18082/v1/messages -H "x-api-key: $TOKEN" \
   -d '{"model":"haiku","max_tokens":100,"messages":[{"role":"user","content":"Remember: ANANAS."}]}'
 
 # turn 2 — resume
 curl http://127.0.0.1:18082/v1/messages -H "x-api-key: $TOKEN" \
-  -H "X-Session-Id: 133cc414-…" \
+  -H "X-Relay-Session-Id: 133cc414-…" \
   -d '{"model":"haiku","max_tokens":100,"messages":[{"role":"user","content":"Which word?"}]}'
 # → "ANANAS"
 ```
@@ -245,7 +283,7 @@ memory across requests.
 curl http://127.0.0.1:18082/v1/messages -H "x-api-key: $TOKEN" \
   -H "X-Agentic-Authorization: Bearer $AGENTIC" \
   -H "X-Agentic-Outputs: 668e8c35…" \
-  -H "X-Session-Id: 32e9fa00-…" \
+  -H "X-Relay-Session-Id: 32e9fa00-…" \
   -d '{"model":"haiku","max_tokens":100,"messages":[{"role":"user","content":"What file did you create?"}]}'
 ```
 

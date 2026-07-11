@@ -912,15 +912,15 @@ func TestSessionIDReturnedInHeader(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d", rec.Code)
 	}
-	if got := rec.Header().Get("X-Session-Id"); got != "984f3680-403a-4275-9b3f-eeed6b8100bf" {
-		t.Errorf("X-Session-Id = %q", got)
+	if got := rec.Header().Get("X-Relay-Session-Id"); got != "984f3680-403a-4275-9b3f-eeed6b8100bf" {
+		t.Errorf("X-Relay-Session-Id = %q", got)
 	}
 }
 
 func TestResumeInInferenceMode(t *testing.T) {
 	fb := &fakeBackend{}
 	h := newTestServer(t, fb)
-	rec := postMessages(t, h, map[string]string{"X-Session-Id": "984f3680-403a-4275-9b3f-eeed6b8100bf"})
+	rec := postMessages(t, h, map[string]string{"X-Relay-Session-Id": "984f3680-403a-4275-9b3f-eeed6b8100bf"})
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, body: %s", rec.Code, rec.Body.String())
 	}
@@ -948,7 +948,7 @@ func TestResumeInRetainedAgenticWorkspace(t *testing.T) {
 	second := postMessages(t, h, map[string]string{
 		"X-Agentic-Authorization": "Bearer agentic-secret",
 		"X-Agentic-Outputs":       id,
-		"X-Session-Id":            "984f3680-403a-4275-9b3f-eeed6b8100bf",
+		"X-Relay-Session-Id":      "984f3680-403a-4275-9b3f-eeed6b8100bf",
 	})
 	if second.Code != http.StatusOK {
 		t.Fatalf("status = %d, body: %s", second.Code, second.Body.String())
@@ -968,7 +968,7 @@ func TestResumeRefusedWithoutStableWorkspace(t *testing.T) {
 	h := newTestServer(t, &fakeBackend{}, agenticPerRequest, withOutputsDir(t))
 	rec := postMessages(t, h, map[string]string{
 		"X-Agentic-Authorization": "Bearer agentic-secret",
-		"X-Session-Id":            "984f3680-403a-4275-9b3f-eeed6b8100bf",
+		"X-Relay-Session-Id":      "984f3680-403a-4275-9b3f-eeed6b8100bf",
 	})
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("status = %d, want 400", rec.Code)
@@ -1409,4 +1409,148 @@ func TestA2ATaskReachesTheBackend(t *testing.T) {
 	if len(env.Result.Task.Artifacts) == 0 || env.Result.Task.Artifacts[0].Parts[0].Text != "Hello" {
 		t.Errorf("artifacts = %+v, want the backend's answer", env.Result.Task.Artifacts)
 	}
+}
+
+// --- header collision: X-Session-Id is not ours to claim ------------------
+
+func TestRelaySessionHeaderResumesAndIsReturned(t *testing.T) {
+	fb := &fakeBackend{sessionID: "133cc414-ce5e-4b5a-80ca-3997e1ce9641"}
+	h := newTestServer(t, fb)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("POST", "/v1/messages", strings.NewReader(messagesBody))
+	req.Header.Set("Authorization", "Bearer good-token")
+	h.ServeHTTP(rec, req)
+
+	if got := rec.Header().Get("X-Relay-Session-Id"); got != fb.sessionID {
+		t.Fatalf("X-Relay-Session-Id = %q, want the backend session", got)
+	}
+
+	rec = httptest.NewRecorder()
+	req = httptest.NewRequest("POST", "/v1/messages", strings.NewReader(messagesBody))
+	req.Header.Set("Authorization", "Bearer good-token")
+	req.Header.Set("X-Relay-Session-Id", "abc-123")
+	h.ServeHTTP(rec, req)
+
+	if got := fb.sessionSeen(); got != "abc-123" {
+		t.Errorf("backend saw SessionID %q, want the resumed session", got)
+	}
+}
+
+func TestForeignSessionHeaderIsNotTreatedAsOurs(t *testing.T) {
+	// OpenCode (and other agent clients) send their own `x-session-id` for
+	// their internal tracking. We used to read it and hand it to the backend
+	// as a conversation to resume, which failed every request. The header is
+	// too generic to claim: it is not ours, and it must be ignored.
+	fb := &fakeBackend{}
+	h := newTestServer(t, fb)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("POST", "/v1/messages", strings.NewReader(messagesBody))
+	req.Header.Set("Authorization", "Bearer good-token")
+	req.Header.Set("X-Session-Id", "ses_0ad7e68ffffewNVMLn72KN1yxO") // a client's own id
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200: a client's own session header must not break the request", rec.Code)
+	}
+	if got := fb.sessionSeen(); got != "" {
+		t.Errorf("backend saw SessionID %q; X-Session-Id belongs to the caller, not to us", got)
+	}
+}
+
+// --- client tools on the OpenAI wire -------------------------------------
+
+const chatToolsBody = `{"model":"sonnet","messages":[{"role":"user","content":"weather in Paris?"}],
+	"tools":[{"type":"function","function":{"name":"get_weather","description":"weather",
+	"parameters":{"type":"object","properties":{"city":{"type":"string"}}}}}]}`
+
+func TestChatCompletionsServesClientTools(t *testing.T) {
+	// tools[] used to be accepted on this wire and then silently dropped: the
+	// MCP bridge was never mounted, so the model never saw them and the caller
+	// got plain prose. An agent client (OpenCode, LangChain…) would look broken.
+	fb := &toolBackend{}
+	h := newTestServer(t, fb)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("POST", "/v1/chat/completions", strings.NewReader(chatToolsBody))
+	req.Header.Set("Authorization", "Bearer good-token")
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d: %s", rec.Code, rec.Body)
+	}
+	var resp struct {
+		Choices []struct {
+			Message struct {
+				Content   any `json:"content"`
+				ToolCalls []struct {
+					ID       string `json:"id"`
+					Type     string `json:"type"`
+					Function struct {
+						Name      string `json:"name"`
+						Arguments string `json:"arguments"`
+					} `json:"function"`
+				} `json:"tool_calls"`
+			} `json:"message"`
+			FinishReason string `json:"finish_reason"`
+		} `json:"choices"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode: %v (%s)", err, rec.Body)
+	}
+	if len(resp.Choices) != 1 {
+		t.Fatalf("choices = %+v", resp.Choices)
+	}
+	calls := resp.Choices[0].Message.ToolCalls
+	if len(calls) != 1 {
+		t.Fatalf("tool_calls = %+v, want the model's call surfaced", calls)
+	}
+	if calls[0].Function.Name != "get_weather" || calls[0].Type != "function" {
+		t.Errorf("tool_call = %+v", calls[0])
+	}
+	if calls[0].Function.Arguments != `{"city":"Paris"}` {
+		t.Errorf("arguments = %q, want the accumulated input JSON", calls[0].Function.Arguments)
+	}
+	if resp.Choices[0].FinishReason != "tool_calls" {
+		t.Errorf("finish_reason = %q, want tool_calls", resp.Choices[0].FinishReason)
+	}
+}
+
+func TestChatCompletionsRefusesToolsOnBackendsWithout(t *testing.T) {
+	fb := &fakeBackend{} // ClientTools = false
+	h := newTestServer(t, fb)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("POST", "/v1/chat/completions", strings.NewReader(chatToolsBody))
+	req.Header.Set("Authorization", "Bearer good-token")
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400 rather than silently dropping the tools", rec.Code)
+	}
+}
+
+// toolBackend emits tool calls natively, the way the ollama backend does.
+// Those events used to be dropped on the floor by the OpenAI sink.
+type toolBackend struct{ fakeBackend }
+
+func (b *toolBackend) Capabilities() core.Capabilities {
+	return core.Capabilities{Streaming: true, ClientTools: true}
+}
+
+func (b *toolBackend) Infer(ctx context.Context, req core.InferRequest, sink core.EventSink) error {
+	b.calls.Add(1)
+	for _, ev := range []core.Event{
+		{Kind: core.EventMessageStart},
+		{Kind: core.EventToolUseStart, ToolID: "call_1", ToolName: "get_weather"},
+		{Kind: core.EventToolUseDelta, Text: `{"city":"Paris"}`},
+		{Kind: core.EventToolUseStop},
+		{Kind: core.EventMessageStop},
+	} {
+		if err := sink.Emit(ctx, ev); err != nil {
+			return err
+		}
+	}
+	return nil
 }

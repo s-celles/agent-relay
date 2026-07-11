@@ -4,7 +4,7 @@
     "title": "agent-relay",
     "version": "0.8.0",
     "summary": "The relay's own HTTP contract — not a re-specification of the model APIs.",
-    "description": "This document describes **what the relay adds**, and deliberately not what it merely proxies.\n\nThe request and response bodies of `/v1/messages` and `/v1/chat/completions` are those of the **Anthropic Messages API** and the **OpenAI Chat Completions API**; they are specified upstream, implemented by the official SDKs, and are not restated here (re-deriving them would create a second source of truth that silently drifts). What *is* specified here is the part only this relay defines: the authentication, the `X-Agentic-*` / `X-Session-Id` / `X-Request-Timeout` header contract, the backpressure and timeout status codes, and the retained-outputs endpoints.\n\n**Out of scope on purpose:** the Agent2Agent surface (`POST /a2a`, `GET /.well-known/agent-card.json`). A2A is self-describing — its Agent Card *is* the machine-readable contract, and its normative schema is the A2A protobuf. Describing it a third time here is exactly how the upstream specification acquired the inconsistencies recorded in `upstream-bugs.md`. See [Agent2Agent](a2a.md).\n\nA test (`internal/server/openapi_test.go`) holds this document against the routes the server actually registers, so an endpoint cannot be added, moved, or removed without this file failing the build.",
+    "description": "This document describes **what the relay adds**, and deliberately not what it merely proxies.\n\nThe request and response bodies of `/v1/messages` and `/v1/chat/completions` are those of the **Anthropic Messages API** and the **OpenAI Chat Completions API**; they are specified upstream, implemented by the official SDKs, and are not restated here (re-deriving them would create a second source of truth that silently drifts). What *is* specified here is the part only this relay defines: the authentication, the `X-Agentic-*` / `X-Relay-Session-Id` / `X-Request-Timeout` header contract, the backpressure and timeout status codes, and the retained-outputs endpoints.\n\n**Out of scope on purpose:** the Agent2Agent surface (`POST /a2a`, `GET /.well-known/agent-card.json`). A2A is self-describing — its Agent Card *is* the machine-readable contract, and its normative schema is the A2A protobuf. Describing it a third time here is exactly how the upstream specification acquired the inconsistencies recorded in `upstream-bugs.md`. See [Agent2Agent](a2a.md).\n\nA test (`internal/server/openapi_test.go`) holds this document against the routes the server actually registers, so an endpoint cannot be added, moved, or removed without this file failing the build.",
     "license": {
       "name": "AGPL-3.0-or-later",
       "identifier": "AGPL-3.0-or-later"
@@ -50,7 +50,7 @@
             "description": "The model's reply. `application/json` when `stream` is false, otherwise an SSE stream.",
             "headers": {
               "X-Request-Id": { "$ref": "#/components/headers/XRequestId" },
-              "X-Session-Id": { "$ref": "#/components/headers/XSessionId" },
+              "X-Relay-Session-Id": { "$ref": "#/components/headers/XSessionId" },
               "X-Agentic-Outputs": { "$ref": "#/components/headers/XAgenticOutputs" },
               "X-Request-Timeout": { "$ref": "#/components/headers/XRequestTimeout" }
             },
@@ -100,7 +100,7 @@
             "description": "The model's reply. `application/json` when `stream` is false, otherwise an SSE stream terminated by `data: [DONE]`.",
             "headers": {
               "X-Request-Id": { "$ref": "#/components/headers/XRequestId" },
-              "X-Session-Id": { "$ref": "#/components/headers/XSessionId" },
+              "X-Relay-Session-Id": { "$ref": "#/components/headers/XSessionId" },
               "X-Agentic-Outputs": { "$ref": "#/components/headers/XAgenticOutputs" },
               "X-Request-Timeout": { "$ref": "#/components/headers/XRequestTimeout" }
             },
@@ -300,14 +300,14 @@
         "name": "X-Agentic-Outputs",
         "in": "header",
         "required": false,
-        "description": "Pin this request to an **existing** retained directory, so it works in the same workspace as an earlier one. This is also what makes `X-Session-Id` usable on an agentic request: the backend keys its sessions by working directory, so resuming needs a stable one.",
+        "description": "Pin this request to an **existing** retained directory, so it works in the same workspace as an earlier one. This is also what makes `X-Relay-Session-Id` usable on an agentic request: the backend keys its sessions by working directory, so resuming needs a stable one.",
         "schema": { "type": "string", "pattern": "^[0-9a-f]{32}$" }
       },
       "SessionId": {
-        "name": "X-Session-Id",
+        "name": "X-Relay-Session-Id",
         "in": "header",
         "required": false,
-        "description": "Resume the backend's own conversation instead of replaying a transcript. The id is the one a previous response returned in `X-Session-Id`. On an agentic request without a pinned workspace this is refused with 400 rather than failing opaquely in the backend.",
+        "description": "Resume the backend's own conversation instead of replaying a transcript. The id is the one a previous response returned in `X-Relay-Session-Id`. On an agentic request without a pinned workspace this is refused with 400 rather than failing opaquely in the backend.\n\nThe name is deliberately relay-specific: the generic `X-Session-Id` (used until v0.8.0) collides with agent clients that send their own session id under that name, and is now ignored.",
         "schema": { "type": "string" }
       },
       "RequestTimeout": {
@@ -338,7 +338,7 @@
         "schema": { "type": "string" }
       },
       "XSessionId": {
-        "description": "The backend's conversation id. Send it back in `X-Session-Id` to continue this conversation.",
+        "description": "The backend's conversation id. Send it back in `X-Relay-Session-Id` to continue this conversation.",
         "schema": { "type": "string" }
       },
       "XAgenticOutputs": {

@@ -29,6 +29,10 @@ type StreamSink struct {
 	created      int64
 	started      bool
 	usage        core.Usage
+	// toolIndex numbers the tool calls of this turn: the OpenAI wire streams
+	// them as an indexed array, unlike Anthropic's content blocks.
+	toolIndex  int
+	sawToolUse bool
 }
 
 func NewStreamSink(w http.ResponseWriter, id, model string) *StreamSink {
@@ -50,6 +54,34 @@ func (s *StreamSink) Emit(ctx context.Context, ev core.Event) error {
 			return err
 		}
 		return s.chunk(chunkChoice{Delta: map[string]any{"content": ev.Text}})
+	case core.EventToolUseStart:
+		if err := s.start(); err != nil {
+			return err
+		}
+		s.sawToolUse = true
+		defer func() { s.toolIndex++ }()
+		return s.chunk(chunkChoice{Delta: map[string]any{
+			"tool_calls": []map[string]any{{
+				"index": s.toolIndex,
+				"id":    ev.ToolID,
+				"type":  "function",
+				"function": map[string]any{
+					"name": ev.ToolName, "arguments": "",
+				},
+			}},
+		}})
+	case core.EventToolUseDelta:
+		if !s.sawToolUse {
+			return nil
+		}
+		return s.chunk(chunkChoice{Delta: map[string]any{
+			"tool_calls": []map[string]any{{
+				"index":    s.toolIndex - 1,
+				"function": map[string]any{"arguments": ev.Text},
+			}},
+		}})
+	case core.EventToolUseStop:
+		return nil
 	case core.EventMessageStop:
 		if err := s.start(); err != nil {
 			return err
@@ -58,6 +90,9 @@ func (s *StreamSink) Emit(ctx context.Context, ev core.Event) error {
 			s.usage = *ev.Usage
 		}
 		stop := "stop"
+		if s.sawToolUse {
+			stop = "tool_calls"
+		}
 		if err := s.chunk(chunkChoice{Delta: map[string]any{}, FinishReason: &stop}); err != nil {
 			return err
 		}
@@ -140,12 +175,20 @@ func (s *StreamSink) raw(data string) error {
 
 // CollectSink accumulates the whole event stream for a non-streaming
 // chat.completion response.
+// collectedToolCall accumulates one tool call for a non-streaming response.
+type collectedToolCall struct {
+	id   string
+	name string
+	args strings.Builder
+}
+
 type CollectSink struct {
-	id    string
-	model string
-	text  strings.Builder
-	usage core.Usage
-	err   error
+	id        string
+	model     string
+	text      strings.Builder
+	toolCalls []*collectedToolCall
+	usage     core.Usage
+	err       error
 }
 
 func NewCollectSink(id, model string) *CollectSink {
@@ -156,6 +199,12 @@ func (c *CollectSink) Emit(ctx context.Context, ev core.Event) error {
 	switch ev.Kind {
 	case core.EventTextDelta:
 		c.text.WriteString(ev.Text)
+	case core.EventToolUseStart:
+		c.toolCalls = append(c.toolCalls, &collectedToolCall{id: ev.ToolID, name: ev.ToolName})
+	case core.EventToolUseDelta:
+		if n := len(c.toolCalls); n > 0 {
+			c.toolCalls[n-1].args.WriteString(ev.Text)
+		}
 	case core.EventMessageStart, core.EventMessageStop:
 		if ev.Usage != nil {
 			c.usage = *ev.Usage
@@ -170,6 +219,27 @@ func (c *CollectSink) Emit(ctx context.Context, ev core.Event) error {
 func (c *CollectSink) Err() error { return c.err }
 
 func (c *CollectSink) WriteResponse(w http.ResponseWriter) error {
+	message := map[string]any{"role": "assistant", "content": c.text.String()}
+	finishReason := "stop"
+	if len(c.toolCalls) > 0 {
+		calls := make([]map[string]any, 0, len(c.toolCalls))
+		for _, tc := range c.toolCalls {
+			args := tc.args.String()
+			if !json.Valid([]byte(args)) {
+				args = "{}"
+			}
+			calls = append(calls, map[string]any{
+				"id": tc.id, "type": "function",
+				"function": map[string]any{"name": tc.name, "arguments": args},
+			})
+		}
+		message["tool_calls"] = calls
+		finishReason = "tool_calls"
+		// The wire says content is null when the turn is only tool calls.
+		if c.text.Len() == 0 {
+			message["content"] = nil
+		}
+	}
 	w.Header().Set("Content-Type", "application/json")
 	return json.NewEncoder(w).Encode(map[string]any{
 		"id":      c.id,
@@ -178,8 +248,8 @@ func (c *CollectSink) WriteResponse(w http.ResponseWriter) error {
 		"model":   c.model,
 		"choices": []map[string]any{{
 			"index":         0,
-			"message":       map[string]any{"role": "assistant", "content": c.text.String()},
-			"finish_reason": "stop",
+			"message":       message,
+			"finish_reason": finishReason,
 		}},
 		"usage": map[string]int{
 			"prompt_tokens":     c.usage.InputTokens,

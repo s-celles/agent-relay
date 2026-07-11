@@ -104,7 +104,7 @@ type InferRequest struct {
 	// the backend must use and must NOT delete — its lifecycle belongs to
 	// the server's output store (X-Agentic-Keep-Outputs).
 	OutputDir string
-	// SessionID resumes a previous backend conversation (X-Session-Id).
+	// SessionID resumes a previous backend conversation (X-Relay-Session-Id).
 	// Backends key sessions by working directory, so the server only allows
 	// it where the workdir is stable.
 	SessionID string

@@ -7,6 +7,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **BREAKING — the session header is now `X-Relay-Session-Id`** (both
+  directions); the old `X-Session-Id` is no longer honored on requests, and a
+  one-time warning names the replacement.
+
+  `X-Session-Id` was never ours to claim. Agent clients send their own session
+  id under that name — OpenCode does, as `ses_…` — and the relay read it as a
+  backend conversation to resume, handed it to the CLI as `--resume`, and got
+  back `invalid session id: expected a UUID`. **Every request from such a client
+  failed with a 502**, blaming the backend for the relay's own naming mistake.
+  A header this generic belongs to the caller.
+
+  Migration: rename the header. Responses now carry `X-Relay-Session-Id`.
+
+### Fixed
+
+- **Client-defined tools are now served on `/v1/chat/completions`.** They were
+  accepted and then **silently dropped**: `tools[]` passed validation (the
+  backend does support client tools), but the MCP tool loop was only wired into
+  the Anthropic handler, so the model never saw the tools and the caller got
+  prose instead of a tool call. An agent client pointed at this wire looked
+  broken for no visible reason.
+
+  The OpenAI sink also had no notion of tool calls at all, which meant the
+  **ollama backend's native tool calls were dropped on this wire too**. It now
+  renders `message.tool_calls[]` (and streaming `delta.tool_calls[]`) with
+  `finish_reason: "tool_calls"`, and the tool loop is wired into the handler.
+
 ### Added
 
 - **A2A interoperability check** (`docs/interop/a2a_interop.py`, documented in

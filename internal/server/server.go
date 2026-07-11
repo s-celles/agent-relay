@@ -134,12 +134,22 @@ func (t *traceWriter) Close() {
 	}
 }
 
+// SessionHeader is the header carrying the backend's conversation id, in both
+// directions. It is deliberately relay-specific: `X-Session-Id` — which this
+// used to be — is a name agent clients (OpenCode among them) already use for
+// their *own* session tracking, and reading theirs as a backend conversation
+// to resume broke every one of their requests.
+const SessionHeader = "X-Relay-Session-Id"
+
+// legacySessionHeader is that too-generic name. It is no longer honored.
+const legacySessionHeader = "X-Session-Id"
+
 // sessionHeader returns a callback that reports the backend's conversation
-// id to the caller, so a later request can resume it with X-Session-Id.
+// id to the caller, so a later request can resume it with X-Relay-Session-Id.
 func (s *server) sessionHeader(w http.ResponseWriter) func(string) {
 	return func(id string) {
 		if id != "" {
-			w.Header().Set("X-Session-Id", id)
+			w.Header().Set(SessionHeader, id)
 		}
 	}
 }
@@ -200,6 +210,9 @@ type server struct {
 	// samplingWarn does the same for dropped sampling parameters, which
 	// many clients set on every request by default.
 	samplingWarn sync.Once
+	// legacySessionWarn gates the note about the abandoned X-Session-Id
+	// header: a client that sends its own sends it on every request.
+	legacySessionWarn sync.Once
 }
 
 // Option customizes the server (currently: logger injection).
@@ -382,13 +395,23 @@ func (s *server) prepareTimeout(w http.ResponseWriter, r *http.Request, req *cor
 	return true
 }
 
-// prepareSession honors X-Session-Id. Backends key their sessions by working
-// directory, so resuming is refused where the workdir is ephemeral (an
+// prepareSession honors X-Relay-Session-Id. Backends key their sessions by
+// working directory, so resuming is refused where the workdir is ephemeral (an
 // agentic request without a retained workspace): failing here beats the
 // backend's opaque "no conversation found".
 func (s *server) prepareSession(w http.ResponseWriter, r *http.Request, req *core.InferRequest, writeErr func(http.ResponseWriter, int, string)) bool {
-	id := r.Header.Get("X-Session-Id")
+	id := r.Header.Get(SessionHeader)
 	if id == "" {
+		// A caller's own X-Session-Id is none of our business: it is their id,
+		// for their tracking. Warn once — a client that meant to resume with
+		// the old header would otherwise silently lose continuity — and serve
+		// the request normally.
+		if r.Header.Get(legacySessionHeader) != "" {
+			s.legacySessionWarn.Do(func() {
+				s.logger.Warn("ignoring X-Session-Id: it is too generic a name to claim, and agent clients use it for their own tracking; to resume a backend conversation use X-Relay-Session-Id",
+					"header", legacySessionHeader)
+			})
+		}
 		return true
 	}
 	if req.Agentic && req.OutputDir == "" {
@@ -708,10 +731,19 @@ func (s *server) handleChat(w http.ResponseWriter, r *http.Request) {
 	if req.Stream {
 		sink := openai.NewStreamSink(w, id, req.Model)
 		sink.IncludeUsage = req.IncludeUsage // stream_options.include_usage
+		if s.runWithTools(w, r, req, sink, openai.WriteError) {
+			return
+		}
 		s.run(w, r, req, sink, openai.WriteError)
 		return
 	}
 	sink := openai.NewCollectSink(id, req.Model)
+	if s.runWithTools(w, r, req, sink, openai.WriteError) {
+		if sink.Err() == nil {
+			_ = sink.WriteResponse(w)
+		}
+		return
+	}
 	if !s.runCollected(w, r, req, sink, sink.Err, openai.WriteError) {
 		return
 	}

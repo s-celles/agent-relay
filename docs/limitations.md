@@ -18,7 +18,7 @@ and some are structurally impossible. This page is the honest map.
 | Client-defined tools (`tools[]`) | ✅ works | Bridged over MCP; the subprocess parks between turns |
 | Structured outputs (JSON schema, `strict`) | ❌ absent | No CLI equivalent; prompt engineering only |
 | Assistant prefill / exact turn replay | ❌ absent | History is a text approximation — but see session continuity below |
-| Multi-turn continuity | ✅ via `X-Session-Id` | The backend keeps its own conversation; no transcript replay needed |
+| Multi-turn continuity | ✅ via `X-Relay-Session-Id` | The backend keeps its own conversation; no transcript replay needed |
 | `temperature`, `top_p`, `top_k`, `stop_sequences` | ❌ dropped (signaled) | No CLI equivalents; the relay warns rather than ignoring silently |
 | Thinking/effort control per request | ❌ absent | The CLI decides internally |
 | Prompt caching control (`cache_control`) | ❌ absent | The CLI manages its cache; no client visibility |

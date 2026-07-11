@@ -17,8 +17,9 @@ What only the relay defines *is* specified, in full:
 
 - authentication (`Authorization: Bearer`, or the Anthropic-style `x-api-key`);
 - the header contract — `X-Agentic-Authorization`, `X-Agentic-Keep-Outputs`,
-  `X-Agentic-Outputs`, `X-Session-Id`, `X-Request-Timeout`, `X-Agent-Traces`,
-  and what comes back in `X-Request-Id` / `X-Session-Id`;
+  `X-Agentic-Outputs`, `X-Relay-Session-Id`, `X-Request-Timeout`,
+  `X-Agent-Traces`, and what comes back in `X-Request-Id` /
+  `X-Relay-Session-Id`;
 - the failure modes that are ours and not the model's — 503 (every backend slot
   taken) and 429 (your quota) with `Retry-After`, 504 (deadline, *not* a backend
   failure) versus 502 (backend failure), 403 (agentic refused);
