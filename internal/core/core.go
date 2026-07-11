@@ -112,6 +112,16 @@ type InferRequest struct {
 	// (X-Request-Timeout, clamped by the operator's ceiling). Zero means
 	// "use the default".
 	Timeout time.Duration
+	// ToolBridge, when set, tells the backend how to reach the relay-hosted
+	// MCP server exposing the caller's Tools. Only the server sets it.
+	ToolBridge *ToolBridge
+}
+
+// ToolBridge points a backend at the relay's MCP endpoint for this request's
+// client-defined tools.
+type ToolBridge struct {
+	Config       string   // --mcp-config payload
+	AllowedTools []string // fully-qualified MCP tool names
 }
 
 type EventKind int

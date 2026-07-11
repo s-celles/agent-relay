@@ -24,6 +24,7 @@ import (
 	"github.com/s-celles/agent-relay/internal/obs"
 	"github.com/s-celles/agent-relay/internal/outputs"
 	"github.com/s-celles/agent-relay/internal/ratelimit"
+	"github.com/s-celles/agent-relay/internal/toolbridge"
 )
 
 type startedSink interface {
@@ -167,13 +168,16 @@ func (s *server) accountUsage(w http.ResponseWriter, r *http.Request, u core.Usa
 }
 
 type server struct {
-	dispatcher    *core.Dispatcher
-	metrics       *obs.Metrics
-	logger        *slog.Logger
-	agentic       core.AgenticConfig
-	agenticTokens [][]byte
-	caps          core.Capabilities
-	outputs       *outputs.Store
+	dispatcher     *core.Dispatcher
+	metrics        *obs.Metrics
+	logger         *slog.Logger
+	agentic        core.AgenticConfig
+	agenticTokens  [][]byte
+	caps           core.Capabilities
+	outputs        *outputs.Store
+	bridge         *toolbridge.Bridge
+	toolSessions   *toolSessions
+	toolSessionTTL time.Duration
 	// maxTokensWarn gates the max_tokens-not-enforced warning to once per
 	// process: the Anthropic wire makes max_tokens mandatory, so warning on
 	// every request would flood the log.
@@ -208,18 +212,30 @@ func New(cfg config.Config, backend core.Backend, opts ...Option) (http.Handler,
 	if err != nil {
 		return nil, err
 	}
+	// A parked tool call may wait as long as a request may run.
+	toolTTL := outputsTTL
+	if cfg.RequestTimeout > 0 {
+		toolTTL = cfg.RequestTimeout
+	}
+	bridge, err := toolbridge.New(toolTTL)
+	if err != nil {
+		return nil, err
+	}
 	s := &server{
 		dispatcher: &core.Dispatcher{
 			Backend: backend,
 			Limiter: core.NewLimiter(cfg.MaxConcurrent),
 			Timeout: cfg.RequestTimeout,
 		},
-		metrics:       obs.NewMetrics(),
-		logger:        slog.Default(),
-		agentic:       cfg.Agentic,
-		agenticTokens: cfg.AgenticTokens,
-		caps:          backend.Capabilities(),
-		outputs:       store,
+		metrics:        obs.NewMetrics(),
+		logger:         slog.Default(),
+		agentic:        cfg.Agentic,
+		agenticTokens:  cfg.AgenticTokens,
+		caps:           backend.Capabilities(),
+		outputs:        store,
+		bridge:         bridge,
+		toolSessions:   newToolSessions(),
+		toolSessionTTL: toolTTL,
 	}
 	for _, o := range opts {
 		o(s)
@@ -377,8 +393,103 @@ func (s *server) checkTools(w http.ResponseWriter, req core.InferRequest, writeE
 		return true
 	}
 	writeErr(w, http.StatusBadRequest,
-		"this backend cannot execute client-defined tools: the claude CLI runs its own agent loop and has no raw tool-calling mode; remove tools[] or use a backend with client-tool support")
+		"this backend cannot execute client-defined tools; remove tools[] or use a backend with client-tool support")
 	return false
+}
+
+// resumeToolSession delivers the caller's tool results to a parked backend
+// and returns the session, or nil when this request starts no continuation.
+func (s *server) resumeToolSession(req core.InferRequest) *toolSession {
+	results := toolResults(req)
+	if len(results) == 0 {
+		return nil
+	}
+	var sess *toolSession
+	for _, b := range results {
+		found := s.toolSessions.take(b.ToolID)
+		if found == nil {
+			continue
+		}
+		sess = found
+		if err := sess.bridge.Resolve(b.ToolID, b.Text, b.IsError); err != nil {
+			s.logger.Warn("resolve tool call", "err", err, "tool_use_id", b.ToolID)
+		}
+	}
+	return sess
+}
+
+// runWithTools serves a request whose conversation involves the caller's own
+// tools: either a fresh one (spawn the backend behind an MCP bridge) or the
+// continuation of a parked one (deliver the tool result, resume). It returns
+// false when the request is not a tool conversation at all.
+func (s *server) runWithTools(w http.ResponseWriter, r *http.Request, req core.InferRequest,
+	sink core.EventSink, writeErr func(http.ResponseWriter, int, string)) bool {
+
+	sess := s.resumeToolSession(req)
+	if sess == nil && len(req.Tools) == 0 {
+		return false // ordinary request
+	}
+
+	s.metrics.RequestStarted()
+	defer s.metrics.RequestFinished()
+	s.toolSessions.sweep(time.Now())
+
+	if sess == nil {
+		var err error
+		sess, err = s.startToolSession(r, req)
+		if err != nil {
+			s.metrics.BackendError()
+			s.logger.Error("start tool session", "err", err)
+			writeErr(w, http.StatusInternalServerError, "cannot start a tool session")
+			return true
+		}
+	}
+
+	call, err := sess.pumpUntilPause(r.Context(), sink)
+	switch {
+	case err != nil:
+		sess.finish()
+		s.reportDispatchError(w, r, err, false, nil, writeErr)
+	case call != nil:
+		// The backend is parked on the caller's tool: report it and end the
+		// turn, exactly as the Messages API would.
+		sess.expires = time.Now().Add(s.toolSessionTTL)
+		s.toolSessions.put(call.ID, sess)
+		if err := emitToolUse(r.Context(), sink, call); err != nil {
+			sess.finish()
+		}
+	default:
+		sess.finish() // the turn completed without another tool call
+	}
+	return true
+}
+
+// startToolSession spawns the backend behind an MCP bridge exposing the
+// caller's tools, in a goroutine that outlives this HTTP request.
+func (s *server) startToolSession(r *http.Request, req core.InferRequest) (*toolSession, error) {
+	bridgeSession := s.bridge.NewSession(req.Tools)
+	req.ToolBridge = &core.ToolBridge{
+		Config:       bridgeSession.MCPConfig(),
+		AllowedTools: bridgeSession.AllowedTools(),
+	}
+
+	// The backend must survive this request: it stays parked between turns.
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), s.toolSessionTTL)
+	sess := &toolSession{
+		bridge:  bridgeSession,
+		events:  make(chan core.Event, 32),
+		done:    make(chan error, 1),
+		cancel:  cancel,
+		expires: time.Now().Add(s.toolSessionTTL),
+	}
+	go func() {
+		defer cancel()
+		defer s.bridge.CloseSession(bridgeSession.ID())
+		defer close(sess.events)
+		err := s.dispatcher.Do(ctx, req, &chanSink{ch: sess.events, ctx: ctx})
+		sess.done <- err
+	}()
+	return sess, nil
 }
 
 // auditAgentic emits the one-per-request audit line for agentic execution
@@ -506,10 +617,19 @@ func (s *server) handleMessages(w http.ResponseWriter, r *http.Request) {
 	if req.Stream {
 		sink := anthropic.NewStreamSink(w, id, req.Model)
 		sink.Traces = req.Traces // custom SSE events; opt-in
+		if s.runWithTools(w, r, req, sink, anthropic.WriteError) {
+			return
+		}
 		s.run(w, r, req, sink, anthropic.WriteError)
 		return
 	}
 	sink := anthropic.NewCollectSink(id, req.Model)
+	if s.runWithTools(w, r, req, sink, anthropic.WriteError) {
+		if sink.Err() == nil {
+			_ = sink.WriteResponse(w)
+		}
+		return
+	}
 	if !s.runCollected(w, r, req, sink, sink.Err, anthropic.WriteError) {
 		return
 	}

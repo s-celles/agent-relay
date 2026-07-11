@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -721,6 +722,147 @@ func TestClientToolsAcceptedWhenBackendSupportsThem(t *testing.T) {
 	}
 	if fb.calls.Load() != 1 {
 		t.Fatal("backend should have served the tools request")
+	}
+}
+
+// toolCallingBackend simulates a backend that calls the caller's tool through
+// the relay's MCP bridge, then answers using the result.
+type toolCallingBackend struct {
+	fakeBackend
+	gotResult chan string
+}
+
+func (b *toolCallingBackend) Capabilities() core.Capabilities {
+	return core.Capabilities{Streaming: true, ClientTools: true}
+}
+
+func (b *toolCallingBackend) Infer(ctx context.Context, req core.InferRequest, sink core.EventSink) error {
+	b.calls.Add(1)
+	if req.ToolBridge == nil {
+		return errors.New("no tool bridge supplied")
+	}
+	// Call the caller's tool exactly as the CLI would: over MCP.
+	var cfg struct {
+		MCPServers map[string]struct {
+			URL     string            `json:"url"`
+			Headers map[string]string `json:"headers"`
+		} `json:"mcpServers"`
+	}
+	if err := json.Unmarshal([]byte(req.ToolBridge.Config), &cfg); err != nil {
+		return err
+	}
+	srv := cfg.MCPServers["relay"]
+
+	body, _ := json.Marshal(map[string]any{
+		"jsonrpc": "2.0", "id": 1, "method": "tools/call",
+		"params": map[string]any{
+			"name": "get_weather", "arguments": map[string]any{"city": "Paris"},
+			"_meta": map[string]any{"claudecode/toolUseId": "toolu_live"},
+		},
+	})
+	httpReq, _ := http.NewRequestWithContext(ctx, "POST", srv.URL, bytes.NewReader(body))
+	httpReq.Header.Set("Authorization", srv.Headers["Authorization"])
+	resp, err := http.DefaultClient.Do(httpReq)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	var out struct {
+		Result struct {
+			Content []struct {
+				Text string `json:"text"`
+			} `json:"content"`
+		} `json:"result"`
+	}
+	json.NewDecoder(resp.Body).Decode(&out)
+	b.gotResult <- out.Result.Content[0].Text
+
+	// The tool result came back: answer with it.
+	sink.Emit(ctx, core.Event{Kind: core.EventTextDelta,
+		Text: "Weather: " + out.Result.Content[0].Text})
+	return sink.Emit(ctx, core.Event{Kind: core.EventMessageStop,
+		Usage: &core.Usage{InputTokens: 3, OutputTokens: 5}})
+}
+
+func TestClientToolLoop(t *testing.T) {
+	// The full Messages API tool loop, across two HTTP requests: the model
+	// calls the caller's tool, the relay parks the backend and returns
+	// tool_use; the caller answers with tool_result and the backend resumes.
+	fb := &toolCallingBackend{gotResult: make(chan string, 1)}
+	h := newTestServer(t, fb)
+
+	// Turn 1: the request declares a tool; the response must be a tool_use.
+	req := httptest.NewRequest("POST", "/v1/messages", strings.NewReader(toolsBody))
+	req.Header.Set("x-api-key", "good-token")
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("turn 1: status = %d, body: %s", rec.Code, rec.Body.String())
+	}
+	var first struct {
+		StopReason string `json:"stop_reason"`
+		Content    []struct {
+			Type  string          `json:"type"`
+			ID    string          `json:"id"`
+			Name  string          `json:"name"`
+			Input json.RawMessage `json:"input"`
+		} `json:"content"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &first); err != nil {
+		t.Fatalf("turn 1 body: %v", err)
+	}
+	if first.StopReason != "tool_use" {
+		t.Fatalf("stop_reason = %q, want tool_use (body %s)", first.StopReason, rec.Body.String())
+	}
+	var toolUse *struct {
+		Type  string          `json:"type"`
+		ID    string          `json:"id"`
+		Name  string          `json:"name"`
+		Input json.RawMessage `json:"input"`
+	}
+	for i := range first.Content {
+		if first.Content[i].Type == "tool_use" {
+			toolUse = &first.Content[i]
+		}
+	}
+	if toolUse == nil {
+		t.Fatalf("no tool_use block: %s", rec.Body.String())
+	}
+	if toolUse.Name != "get_weather" || !strings.Contains(string(toolUse.Input), "Paris") {
+		t.Fatalf("tool_use = %+v", toolUse)
+	}
+
+	// Turn 2: the caller answers with the tool_result, as the API prescribes.
+	body := `{"model":"sonnet","max_tokens":100,
+		"tools":[{"name":"get_weather","description":"d","input_schema":{"type":"object"}}],
+		"messages":[
+			{"role":"user","content":"weather?"},
+			{"role":"assistant","content":[{"type":"tool_use","id":"` + toolUse.ID + `","name":"get_weather","input":{"city":"Paris"}}]},
+			{"role":"user","content":[{"type":"tool_result","tool_use_id":"` + toolUse.ID + `","content":"sunny, 24C"}]}
+		]}`
+	req = httptest.NewRequest("POST", "/v1/messages", strings.NewReader(body))
+	req.Header.Set("x-api-key", "good-token")
+	rec = httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("turn 2: status = %d, body: %s", rec.Code, rec.Body.String())
+	}
+
+	select {
+	case got := <-fb.gotResult:
+		if got != "sunny, 24C" {
+			t.Errorf("the backend received %q, want the caller's tool result", got)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("the parked backend never received the tool result")
+	}
+
+	if !strings.Contains(rec.Body.String(), "sunny, 24C") {
+		t.Errorf("turn 2 answer should use the tool result: %s", rec.Body.String())
+	}
+	// One backend run served both turns: the process was parked, not respawned.
+	if fb.calls.Load() != 1 {
+		t.Errorf("backend runs = %d, want 1 (parked across turns)", fb.calls.Load())
 	}
 }
 

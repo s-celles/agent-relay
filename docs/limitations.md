@@ -15,7 +15,7 @@ and some are structurally impossible. This page is the honest map.
 | System prompt | ⚠️ degraded | Passed via `--system-prompt`, but the CLI layers its own behavior |
 | `max_tokens` | ⚠️ not enforced | No CLI flag; accepted + one-time warning |
 | `stop_reason` richness | ⚠️ reduced | Only `end_turn`/`tool_use`; no `max_tokens`/`refusal`/`pause_turn` |
-| Client-defined tools (`tools[]`) | ❌ rejected (400) | The CLI has no raw tool-calling mode |
+| Client-defined tools (`tools[]`) | ✅ works | Bridged over MCP; the subprocess parks between turns |
 | Structured outputs (JSON schema, `strict`) | ❌ absent | No CLI equivalent; prompt engineering only |
 | Assistant prefill / exact turn replay | ❌ absent | History is a text approximation — but see session continuity below |
 | Multi-turn continuity | ✅ via `X-Session-Id` | The backend keeps its own conversation; no transcript replay needed |
@@ -27,17 +27,10 @@ and some are structurally impossible. This page is the honest map.
 ## Structurally impossible
 
 These cannot be fixed inside the relay — the CLI simply has no raw-model
-mode. They are what the ROADMAP's "client-tool execution" item is about, and
-resolving them would require either an upstream CLI feature or a backend
-that fronts the raw API (changing the billing model from subscription to
-API key).
+mode. Resolving them would require either an upstream CLI feature or a
+backend that fronts the raw API (changing the billing model from subscription
+to API key).
 
-- **Client-defined tool calling.** The API accepts your tool definitions,
-  stops at the first `tool_use`, and waits for your `tool_result`. The CLI
-  runs *its own* agent loop with *its own* tools. This is what keeps agentic
-  clients (Claude Agent SDK, Claude Code, LangGraph-style frameworks) from
-  using the relay as their backend. Requests carrying `tools[]` get a clear
-  400 rather than a silently degraded conversation.
 - **Guaranteed structured outputs.** No `output_config.format`, no
   `strict: true`. Prompting for JSON works as well as it works — nothing
   validates the result.
@@ -47,6 +40,14 @@ API key).
   an approximation.
 
 ## Bridged, with caveats
+
+- **Client-defined tools**: `tools[]` works — the relay exposes your tools to
+  the CLI over MCP and parks the subprocess between turns, so the standard
+  Messages API tool loop (and the official SDKs) work unmodified. See
+  [HTTP API — Client-defined tools](api.md#client-defined-tools). The
+  caveats: a parked conversation holds a concurrency slot until you return a
+  result (or the request timeout tears it down), and `tool_choice` is not
+  enforced.
 
 - **Vision and PDFs**: base64 `image`/`document` blocks are accepted and
   materialized into a per-request ephemeral working directory; the CLI's
@@ -73,10 +74,10 @@ API key).
 
 ## The practical dividing line
 
-Use the relay for **text-to-text on your own subscription**: chat clients,
-summarization, classification, LLM-as-judge loops, personal batch jobs,
-prompt-orchestrated harnesses — plus images/PDFs via the bridge. Reach for a
-real API key the moment you need client-side tool loops, schema-guaranteed
-outputs, sampling control, or caching economics. No relay-side work can
-close those gaps against the CLI; a raw-API backend could, at the cost of
-API billing.
+Use the relay for **text-to-text and tool-calling on your own
+subscription**: chat clients, summarization, classification, LLM-as-judge
+loops, personal batch jobs, prompt-orchestrated harnesses, agent loops
+driving your own tools — plus images/PDFs via the attachment bridge. Reach
+for a real API key the moment you need schema-guaranteed outputs, sampling
+control, or caching economics: no relay-side work can close those gaps
+against the CLI; a raw-API backend could, at the cost of API billing.

@@ -85,17 +85,48 @@ directory.
 
 ### Client-defined tools
 
-The wire format fully supports structured content: `tool_use`/`tool_result`
-blocks in conversation *history* are accepted on any backend (the claude
-backend flattens them into its text transcript). However, a request carrying
-`tools[]` — asking the model to call the *caller's* tools and stop — is
-rejected with 400 unless the backend reports client-tool support.
+Send `tools[]` and the relay runs the **standard Messages API tool loop**:
+the model calls your tool, the response stops with `stop_reason: "tool_use"`
+and a `tool_use` block, you execute the tool and send back a `tool_result` —
+exactly as against the real API. The official SDKs work unmodified:
 
-The claude CLI backend does **not**: the CLI runs its own agent loop with its
-own tools and has no raw tool-calling mode. In practice this means agentic
-clients (the Claude Agent SDK, Claude Code) still cannot use the relay as
-their backend; classic chat clients are unaffected. For the full comparison
-of what the API offers that the relay cannot, see
+```python
+from anthropic import Anthropic
+client = Anthropic(base_url="http://127.0.0.1:18082", api_key=TOKEN)
+
+resp = client.messages.create(model="haiku", max_tokens=300, tools=TOOLS, messages=msgs)
+while resp.stop_reason == "tool_use":
+    tu = next(b for b in resp.content if b.type == "tool_use")
+    result = my_tool(**tu.input)                     # your code runs the tool
+    msgs += [{"role": "assistant", "content": resp.content},
+             {"role": "user", "content": [{"type": "tool_result",
+                                           "tool_use_id": tu.id, "content": result}]}]
+    resp = client.messages.create(model="haiku", max_tokens=300, tools=TOOLS, messages=msgs)
+```
+
+**How it works.** The claude CLI has no raw tool-calling mode — but it speaks
+MCP. So the relay hosts a small MCP server exposing *your* tools and points
+the CLI at it (`--mcp-config`, with `--allowedTools` restricted to those tool
+names). When the model calls one, the MCP handler **parks**: the relay
+answers your HTTP request with the `tool_use` block while the subprocess
+stays alive and blocked. Your next request carries the `tool_result`, which
+resolves the parked call and the same subprocess resumes — one CLI run serves
+the whole loop, preserving its context.
+
+Consequences worth knowing:
+
+- **A parked conversation holds a concurrency slot** (the subprocess is
+  alive). It is torn down after `RELAY_REQUEST_TIMEOUT` if you never return a
+  result, so an abandoned loop cannot leak a process.
+- The allowlist granted to the CLI contains **only your tools** — its own
+  Write/Bash stay unpermitted, so a tool request remains an inference-mode
+  request with no host side effects.
+- The MCP endpoint listens on its **own loopback socket**, never on the
+  relay's public bind, and each session carries an unguessable id plus a
+  bearer token.
+- `tool_choice` is decoded but not enforced (the CLI has no equivalent).
+
+For what the API still offers that the relay cannot, see
 [API vs relay limitations](limitations.md).
 
 ## `POST /v1/chat/completions` — OpenAI Chat Completions

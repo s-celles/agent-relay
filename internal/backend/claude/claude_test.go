@@ -422,6 +422,35 @@ func TestInferRejectsAgenticWhenDisabled(t *testing.T) {
 	}
 }
 
+func TestBuildArgsToolBridge(t *testing.T) {
+	// Client tools reach the CLI as an MCP server, allowlisted by name — and
+	// the allowlist must not grant the CLI's own Write/Bash tools.
+	b := newTestBackend(t, core.BackendConfig{CLIPath: "claude"}).(*Backend)
+	args := b.buildArgs(core.InferRequest{
+		Model: "m",
+		ToolBridge: &core.ToolBridge{
+			Config:       `{"mcpServers":{"relay":{"type":"http","url":"http://127.0.0.1:1/mcp/x"}}}`,
+			AllowedTools: []string{"mcp__relay__get_weather", "mcp__relay__lookup"},
+		},
+	})
+	joined := strings.Join(args, " ")
+	if !strings.Contains(joined, "--mcp-config") || !strings.Contains(joined, "mcpServers") {
+		t.Errorf("args missing --mcp-config: %q", joined)
+	}
+	if !strings.Contains(joined, "--allowedTools mcp__relay__get_weather,mcp__relay__lookup") {
+		t.Errorf("args missing the tool allowlist: %q", joined)
+	}
+	for _, forbidden := range []string{"Write", "Bash", "--permission-mode", "--dangerously"} {
+		if strings.Contains(joined, forbidden) {
+			t.Errorf("tool requests must stay inference-mode; args contain %q: %q", forbidden, joined)
+		}
+	}
+	// No bridge, no flags.
+	if strings.Contains(strings.Join(b.buildArgs(core.InferRequest{Model: "m"}), " "), "--mcp-config") {
+		t.Error("--mcp-config must not appear without a tool bridge")
+	}
+}
+
 func TestBuildArgsResume(t *testing.T) {
 	b := newTestBackend(t, core.BackendConfig{CLIPath: "claude"}).(*Backend)
 	args := b.buildArgs(core.InferRequest{
@@ -699,8 +728,8 @@ func TestRegisteredInCore(t *testing.T) {
 	if caps.Agentic {
 		t.Error("agentic must be off by default (REQ-EXEC-01)")
 	}
-	if caps.ClientTools {
-		t.Error("the claude CLI cannot execute client-defined tools; ClientTools must be false")
+	if !caps.ClientTools {
+		t.Error("the CLI serves client-defined tools through the relay's MCP bridge")
 	}
 	if caps.MaxTokens {
 		t.Error("the claude CLI has no max-tokens flag; MaxTokens must be false")

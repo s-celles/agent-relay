@@ -44,12 +44,11 @@ What is known to be missing or deferred, relative to the design document
   into a per-request ephemeral working directory and viewed via the CLI's
   read-only Read tool (auto-allowed within its cwd). Model-mediated rather
   than structurally guaranteed; 20 MiB/block; base64 sources only.
-- [ ] **Client-tool execution.** Even with the wire support above, the
-  claude CLI has no raw tool-calling mode (it runs its own agent loop), so
-  requests with `tools[]` are rejected with 400 on the claude backend and
-  agentic clients (Claude Agent SDK, Claude Code) still cannot use the relay
-  as their backend. Unblocking this requires either an upstream CLI feature
-  or a backend that fronts the raw model API.
+- [x] **Client-tool execution.** Solved via MCP, not a raw-model mode: the
+  relay hosts an MCP server exposing the caller's tools and parks the CLI
+  subprocess between turns, so the standard Messages API tool loop (and the
+  official SDKs) work unmodified. Remaining: `tool_choice` is not enforced,
+  and a parked conversation holds a concurrency slot.
 - [ ] **Second backend (Gemini or Codex).** The registry seam exists
   (REQ-BK-03) but is unexercised; a second adapter would prove it.
 - [ ] **Model-map routing across backends.** When a second backend lands,

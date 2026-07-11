@@ -57,6 +57,10 @@ func (b *Backend) Capabilities() core.Capabilities {
 	return core.Capabilities{
 		Streaming: true,
 		Agentic:   b.agentic.Enabled,
+		// The CLI has no raw tool-calling mode, but it speaks MCP: the relay
+		// exposes the caller's tools as an MCP server and parks the process
+		// on each call (see internal/toolbridge).
+		ClientTools: true,
 		// MaxTokens stays false: the claude CLI has no flag to cap output
 		// tokens, so InferRequest.MaxTokens cannot be enforced. Sampling
 		// stays false for the same reason: no temperature/top_p/top_k/stop
@@ -86,6 +90,15 @@ func (b *Backend) buildArgs(req core.InferRequest) []string {
 	}
 	if req.SessionID != "" {
 		args = append(args, "--resume", req.SessionID)
+	}
+	// Client-defined tools reach the CLI as an MCP server the relay hosts.
+	// --allowedTools is an allowlist limited to those tools: the CLI's own
+	// Write/Bash stay unpermitted, so this remains an inference-mode request.
+	if tb := req.ToolBridge; tb != nil && len(tb.AllowedTools) > 0 {
+		args = append(args,
+			"--mcp-config", tb.Config,
+			"--allowedTools", strings.Join(tb.AllowedTools, ","),
+		)
 	}
 	return args
 }

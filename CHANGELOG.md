@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Client-defined tool execution.** `tools[]` now works: the relay runs the
+  standard Messages API tool loop (`stop_reason: "tool_use"` → the caller
+  executes the tool → `tool_result`), so the official SDKs work unmodified.
+  The claude CLI has no raw tool-calling mode, so the relay bridges over
+  **MCP**: a new `internal/toolbridge` hosts an MCP server (on its own
+  loopback socket, with an unguessable session id and bearer token) exposing
+  the caller's tools, and the CLI is pointed at it with `--mcp-config` plus
+  an `--allowedTools` allowlist limited to those tools — its own Write/Bash
+  stay unpermitted, so a tool request remains inference-mode. When the model
+  calls a tool, the MCP handler *parks*: the relay answers the HTTP request
+  with the `tool_use` block while the subprocess stays alive and blocked; the
+  caller's next request resolves the parked call and the *same* subprocess
+  resumes, preserving its context. A parked conversation holds a concurrency
+  slot and is torn down after `RELAY_REQUEST_TIMEOUT` if the caller never
+  returns a result. `tool_choice` is decoded but not enforced.
+
 ## [0.6.0] - 2026-07-11
 
 ### Added
