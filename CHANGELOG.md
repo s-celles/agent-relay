@@ -14,6 +14,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   loop (`just check` remains the full pre-commit gate), and `opencode.json`
   permission rules denying token-file access, force-pushes, and
   token-spending recipes without confirmation.
+- **Fuzz targets on the untrusted-input surfaces** (`just fuzz`): the
+  Anthropic and OpenAI request decoders (`FuzzDecodeRequest`) and the MCP
+  tool-bridge endpoint (`FuzzHandleMCP`). Seed corpora run on every
+  `go test`; the fuzz recipe explores beyond them.
+- **Dependabot** (`.github/dependabot.yml`): weekly watch over the Go module
+  and the GitHub Actions used by CI, with grouped minor/patch updates.
 - **golangci-lint gate** (`.golangci.yml`, `just lint`, CI step): staticcheck,
   errcheck, unused, and friends beyond `go vet`; errcheck is relaxed in test
   files. `just coverage` surfaces per-package statement coverage.

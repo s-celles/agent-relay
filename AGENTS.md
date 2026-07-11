@@ -12,6 +12,7 @@ authoritative design; `docs/` is the user-facing documentation.
 | Single package | `go test ./internal/server/` |
 | Single test | `go test ./internal/server/ -run TestName` |
 | Coverage view | `just coverage` |
+| Fuzz the untrusted-input surfaces | `just fuzz` (30s/target; seeds run in every `go test`) |
 | Before ANY commit | `just check` (adds golangci-lint + race detector + govulncheck — same gates as CI) |
 
 CI runs exactly the `just check` gate set plus an OpenAPI validation of

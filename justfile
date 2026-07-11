@@ -34,6 +34,10 @@ print-token: _tokens
 build:
     go build -o relay ./cmd/relay
 
+# Remove build artifacts (the relay binary and the mkdocs site directory).
+clean:
+    rm -rf relay site
+
 # Run the relay — plain inference, auth on, subscription-backed.
 run: build _tokens
     RELAY_TOKENS="$(cat {{token_file}})" ./relay
@@ -104,6 +108,14 @@ lint:
 # Per-package statement coverage, so gaps stay visible in the feedback loop.
 coverage:
     go test -cover ./...
+
+# Fuzz the wire decoders and the MCP endpoint (the untrusted-input surfaces).
+# Seeds always run as part of `go test`; this digs deeper. Adjust with
+# `just fuzz 5m` for a longer session.
+fuzz fuzztime="30s":
+    go test -fuzz=FuzzDecodeRequest -fuzztime={{fuzztime}} ./internal/api/anthropic/
+    go test -fuzz=FuzzDecodeRequest -fuzztime={{fuzztime}} ./internal/api/openai/
+    go test -fuzz=FuzzHandleMCP -fuzztime={{fuzztime}} ./internal/toolbridge/
 
 # Fail on any reachable known vulnerability (stdlib or the one dependency).
 vuln:

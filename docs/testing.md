@@ -46,6 +46,24 @@ Static analysis beyond `go vet` (staticcheck, errcheck, unused, …) is
 configured in `.golangci.yml`; `errcheck` is relaxed in test files, where an
 unchecked error is deliberate shorthand.
 
+## Fuzzing
+
+The three surfaces that parse untrusted input have native Go fuzz targets:
+
+- `internal/api/anthropic` and `internal/api/openai` — `FuzzDecodeRequest`,
+  the request-body decoders behind `/v1/messages` and
+  `/v1/chat/completions`. The property checked: never panic, and any
+  *accepted* request satisfies the invariants the rest of the relay relies
+  on (non-empty model, at least one message, valid roles).
+- `internal/toolbridge` — `FuzzHandleMCP`, the JSON-RPC endpoint the CLI
+  subprocess speaks to. The property: never panic, always answer with an
+  expected status; a resolver goroutine drains parked tool calls so
+  `tools/call` inputs cannot wedge the loop.
+
+The seed corpora run on every ordinary `go test` (so CI exercises them);
+`just fuzz` (default 30s per target, `just fuzz 5m` for longer) explores
+beyond the seeds.
+
 ## Continuous integration
 
 `.github/workflows/ci.yml` runs the same gates (gofmt, vet, golangci-lint,
