@@ -103,6 +103,10 @@ type InferRequest struct {
 	// the backend must use and must NOT delete — its lifecycle belongs to
 	// the server's output store (X-Agentic-Keep-Outputs).
 	OutputDir string
+	// SessionID resumes a previous backend conversation (X-Session-Id).
+	// Backends key sessions by working directory, so the server only allows
+	// it where the workdir is stable.
+	SessionID string
 }
 
 type EventKind int
@@ -120,6 +124,9 @@ const (
 	// to the caller, and are only surfaced when the client opts in.
 	EventAgentToolUse
 	EventAgentToolResult
+	// EventSession reports the backend conversation id, so the caller can
+	// resume it on a later request.
+	EventSession
 )
 
 type Usage struct {
@@ -140,6 +147,7 @@ type Event struct {
 	ToolName  string          // EventToolUseStart / EventAgentToolUse
 	ToolInput json.RawMessage // EventAgentToolUse
 	IsError   bool            // EventAgentToolResult
+	SessionID string          // EventSession
 	// StopReason is set on EventMessageStop; "" means the default
 	// ("end_turn", or "tool_use" when the turn produced tool calls).
 	StopReason string

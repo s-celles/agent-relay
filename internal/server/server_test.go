@@ -19,14 +19,17 @@ import (
 )
 
 type fakeBackend struct {
-	calls       atomic.Int64
-	lastAgentic atomic.Bool
-	block       bool
-	clientTools bool
-	maxTokens   bool
-	sampling    bool
-	costUSD     float64
-	emitTrace   bool
+	calls         atomic.Int64
+	lastAgentic   atomic.Bool
+	lastSessionID atomic.Value // string
+	lastOutputDir atomic.Value // string
+	block         bool
+	clientTools   bool
+	maxTokens     bool
+	sampling      bool
+	costUSD       float64
+	emitTrace     bool
+	sessionID     string // reported back via EventSession
 }
 
 func (f *fakeBackend) Name() string { return "fake" }
@@ -41,6 +44,13 @@ func (f *fakeBackend) Capabilities() core.Capabilities {
 func (f *fakeBackend) Infer(ctx context.Context, req core.InferRequest, sink core.EventSink) error {
 	f.calls.Add(1)
 	f.lastAgentic.Store(req.Agentic)
+	f.lastSessionID.Store(req.SessionID)
+	f.lastOutputDir.Store(req.OutputDir)
+	if f.sessionID != "" {
+		if err := sink.Emit(ctx, core.Event{Kind: core.EventSession, SessionID: f.sessionID}); err != nil {
+			return err
+		}
+	}
 	if req.OutputDir != "" {
 		// Simulate an agentic run producing artifacts.
 		os.MkdirAll(filepath.Join(req.OutputDir, "sub"), 0o700)
@@ -70,6 +80,16 @@ func (f *fakeBackend) Infer(ctx context.Context, req core.InferRequest, sink cor
 		}
 	}
 	return nil
+}
+
+func (f *fakeBackend) sessionSeen() string {
+	v, _ := f.lastSessionID.Load().(string)
+	return v
+}
+
+func (f *fakeBackend) outputDirSeen() string {
+	v, _ := f.lastOutputDir.Load().(string)
+	return v
 }
 
 func newTestServer(t *testing.T, fb core.Backend, mutate ...func(*config.Config)) http.Handler {
@@ -571,6 +591,92 @@ func TestMaxTokensWarningLoggedOncePerProcess(t *testing.T) {
 	}
 	if n := strings.Count(buf.String(), "not enforced"); n != 1 {
 		t.Fatalf("max_tokens warning logged %d times across two requests, want exactly 1; log:\n%s", n, buf.String())
+	}
+}
+
+// Session continuity: the CLI keys its sessions by working directory, so
+// resuming is only offered where the workdir is stable.
+
+func TestSessionIDReturnedInHeader(t *testing.T) {
+	h := newTestServer(t, &fakeBackend{sessionID: "984f3680-403a-4275-9b3f-eeed6b8100bf"})
+	rec := postMessages(t, h, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d", rec.Code)
+	}
+	if got := rec.Header().Get("X-Session-Id"); got != "984f3680-403a-4275-9b3f-eeed6b8100bf" {
+		t.Errorf("X-Session-Id = %q", got)
+	}
+}
+
+func TestResumeInInferenceMode(t *testing.T) {
+	fb := &fakeBackend{}
+	h := newTestServer(t, fb)
+	rec := postMessages(t, h, map[string]string{"X-Session-Id": "984f3680-403a-4275-9b3f-eeed6b8100bf"})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body: %s", rec.Code, rec.Body.String())
+	}
+	if fb.sessionSeen() != "984f3680-403a-4275-9b3f-eeed6b8100bf" {
+		t.Errorf("backend got session id %q", fb.sessionSeen())
+	}
+}
+
+func TestResumeInRetainedAgenticWorkspace(t *testing.T) {
+	// The caller pins the workspace by echoing back the outputs id; the
+	// request runs in that retained directory, so the CLI finds its session.
+	fb := &fakeBackend{}
+	h := newTestServer(t, fb, agenticPerRequest, withOutputsDir(t))
+
+	first := postMessages(t, h, map[string]string{
+		"X-Agentic-Authorization": "Bearer agentic-secret",
+		"X-Agentic-Keep-Outputs":  "true",
+	})
+	id := first.Header().Get("X-Agentic-Outputs")
+	if id == "" {
+		t.Fatal("no outputs id")
+	}
+	firstDir := fb.outputDirSeen()
+
+	second := postMessages(t, h, map[string]string{
+		"X-Agentic-Authorization": "Bearer agentic-secret",
+		"X-Agentic-Outputs":       id,
+		"X-Session-Id":            "984f3680-403a-4275-9b3f-eeed6b8100bf",
+	})
+	if second.Code != http.StatusOK {
+		t.Fatalf("status = %d, body: %s", second.Code, second.Body.String())
+	}
+	if fb.outputDirSeen() != firstDir {
+		t.Errorf("resumed request ran in %q, want the retained workspace %q",
+			fb.outputDirSeen(), firstDir)
+	}
+	if second.Header().Get("X-Agentic-Outputs") != id {
+		t.Errorf("outputs id should be echoed back, got %q", second.Header().Get("X-Agentic-Outputs"))
+	}
+}
+
+func TestResumeRefusedWithoutStableWorkspace(t *testing.T) {
+	// Agentic without a pinned workspace = ephemeral dir = the CLI would not
+	// find the session. Fail loudly instead of confusingly.
+	h := newTestServer(t, &fakeBackend{}, agenticPerRequest, withOutputsDir(t))
+	rec := postMessages(t, h, map[string]string{
+		"X-Agentic-Authorization": "Bearer agentic-secret",
+		"X-Session-Id":            "984f3680-403a-4275-9b3f-eeed6b8100bf",
+	})
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400", rec.Code)
+	}
+	if !strings.Contains(rec.Body.String(), "workspace") {
+		t.Errorf("error should explain the workspace requirement: %s", rec.Body.String())
+	}
+}
+
+func TestUnknownWorkspaceIDRejected(t *testing.T) {
+	h := newTestServer(t, &fakeBackend{}, agenticPerRequest, withOutputsDir(t))
+	rec := postMessages(t, h, map[string]string{
+		"X-Agentic-Authorization": "Bearer agentic-secret",
+		"X-Agentic-Outputs":       "00000000000000000000000000000000",
+	})
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want 404 for an unknown workspace", rec.Code)
 	}
 }
 

@@ -13,6 +13,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -83,8 +84,16 @@ func (b *Backend) buildArgs(req core.InferRequest) []string {
 	if req.System != "" {
 		args = append(args, "--system-prompt", req.System)
 	}
+	if req.SessionID != "" {
+		args = append(args, "--resume", req.SessionID)
+	}
 	return args
 }
+
+// sessionIDPattern matches the CLI's session ids (UUIDs). Validated before
+// spawning: the value becomes an argv element, and a leading dash would turn
+// a caller-supplied string into a CLI flag.
+var sessionIDPattern = regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$`)
 
 // mapModel resolves a logical model name via the operator-configured table,
 // passing unknown names through unchanged (DQ-2).
@@ -220,6 +229,9 @@ func (b *Backend) Infer(ctx context.Context, req core.InferRequest, sink core.Ev
 	// was explicitly configured for agentic execution (REQ-EXEC-01/06).
 	if req.Agentic && !b.agentic.Enabled {
 		return fmt.Errorf("agentic request refused: backend %q is not configured for agentic execution", b.Name())
+	}
+	if req.SessionID != "" && !sessionIDPattern.MatchString(req.SessionID) {
+		return fmt.Errorf("invalid session id %q: expected a UUID", req.SessionID)
 	}
 
 	ctx, cancel := context.WithCancel(ctx)

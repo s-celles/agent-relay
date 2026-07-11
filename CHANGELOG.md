@@ -9,6 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Session continuity: responses carry the backend conversation id
+  (`X-Session-Id`), and sending it back resumes that conversation
+  (`--resume`) instead of replaying a flattened transcript. Because the CLI
+  keys sessions by working directory, resuming requires a stable workspace:
+  inference mode, or an agentic request pinning a retained workspace with
+  `X-Agentic-Outputs` — which together give a persistent agentic workspace
+  (files *and* memory). Resuming without one is refused with an explanatory
+  400; session ids are validated as UUIDs before reaching the CLI.
 - Agent tool traces: the backend agent's own tool calls and results (parsed
   from the CLI's `assistant`/`user` stream-json lines, previously dropped)
   are surfaced two ways — opt-in SSE events on `/v1/messages`

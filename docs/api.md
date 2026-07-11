@@ -148,6 +148,57 @@ flags, each in its own ephemeral working directory. See
 [execution-modes.md](execution-modes.md) for the full inference-vs-agentic
 comparison.
 
+### Session continuity (resuming a conversation)
+
+Every response carries the backend's conversation id:
+
+```
+X-Session-Id: 133cc414-ce5e-4b5a-80ca-3997e1ce9641
+```
+
+Send it back on a later request to **resume** that conversation: the backend
+keeps its context (and its prompt cache) instead of starting fresh, and the
+relay does not have to replay the history as a flattened transcript.
+
+```sh
+# turn 1 — note the X-Session-Id in the response headers
+curl -D- http://127.0.0.1:18082/v1/messages -H "x-api-key: $TOKEN" \
+  -d '{"model":"haiku","max_tokens":100,"messages":[{"role":"user","content":"Remember: ANANAS."}]}'
+
+# turn 2 — resume
+curl http://127.0.0.1:18082/v1/messages -H "x-api-key: $TOKEN" \
+  -H "X-Session-Id: 133cc414-…" \
+  -d '{"model":"haiku","max_tokens":100,"messages":[{"role":"user","content":"Which word?"}]}'
+# → "ANANAS"
+```
+
+**The workspace must be stable.** The claude CLI keys its sessions by working
+directory, so resuming only works where that directory persists:
+
+| Mode | Resumable? |
+|---|---|
+| Inference | ✅ — the workdir is the static `RELAY_CLAUDE_WORKDIR` |
+| Agentic with a retained workspace | ✅ — pin it by echoing the previous `X-Agentic-Outputs` id back on the request |
+| Agentic with an ephemeral workspace | ❌ — 400, with an explanation |
+
+Pinning a workspace *and* resuming a session is the combination that gives a
+**persistent agentic workspace**: the agent keeps both its files and its
+memory across requests.
+
+```sh
+# turn 2, agentic: same files, same conversation
+curl http://127.0.0.1:18082/v1/messages -H "x-api-key: $TOKEN" \
+  -H "X-Agentic-Authorization: Bearer $AGENTIC" \
+  -H "X-Agentic-Outputs: 668e8c35…" \
+  -H "X-Session-Id: 32e9fa00-…" \
+  -d '{"model":"haiku","max_tokens":100,"messages":[{"role":"user","content":"What file did you create?"}]}'
+```
+
+Session ids are validated as UUIDs before reaching the CLI (a caller-supplied
+argv element must not be able to become a flag). Note that only the *new*
+message needs to be sent on a resumed turn — the backend already holds the
+history.
+
 ### Agent tool traces
 
 An agentic run is otherwise a black box: the client sees text, never what the

@@ -72,6 +72,7 @@ func TestInferHappyPath(t *testing.T) {
 		}
 	}
 	want := []core.EventKind{
+		core.EventSession, // the init line names the conversation
 		core.EventMessageStart,
 		core.EventTextDelta, core.EventTextDelta,
 		core.EventMessageStop,
@@ -93,9 +94,14 @@ func TestInferHappyPath(t *testing.T) {
 	}
 	// message_start reports input tokens; forward them so wire adapters can
 	// render a faithful message_start instead of zeros.
-	first := sink.events[0]
-	if first.Usage == nil || first.Usage.InputTokens != 3 {
-		t.Errorf("message_start usage = %+v, want input_tokens 3", first.Usage)
+	var start *core.Event
+	for i, ev := range sink.events {
+		if ev.Kind == core.EventMessageStart {
+			start = &sink.events[i]
+		}
+	}
+	if start == nil || start.Usage == nil || start.Usage.InputTokens != 3 {
+		t.Errorf("message_start usage = %+v, want input_tokens 3", start)
 	}
 }
 
@@ -390,6 +396,63 @@ func TestInferRejectsAgenticWhenDisabled(t *testing.T) {
 	}
 	if strings.Contains(err.Error(), "spawn") {
 		t.Fatalf("request must be refused before spawning, got: %v", err)
+	}
+}
+
+func TestBuildArgsResume(t *testing.T) {
+	b := newTestBackend(t, core.BackendConfig{CLIPath: "claude"}).(*Backend)
+	args := b.buildArgs(core.InferRequest{
+		Model:     "m",
+		SessionID: "984f3680-403a-4275-9b3f-eeed6b8100bf",
+	})
+	joined := strings.Join(args, " ")
+	if !strings.Contains(joined, "--resume 984f3680-403a-4275-9b3f-eeed6b8100bf") {
+		t.Errorf("args missing --resume: %q", joined)
+	}
+	// No session: no flag.
+	if strings.Contains(strings.Join(b.buildArgs(core.InferRequest{Model: "m"}), " "), "--resume") {
+		t.Error("--resume must not appear without a session id")
+	}
+}
+
+func TestInferRejectsMalformedSessionID(t *testing.T) {
+	// A session id becomes an argv element: anything but a UUID (notably a
+	// leading dash) must be refused before spawning.
+	b := newTestBackend(t, core.BackendConfig{CLIPath: "/nonexistent/claude"})
+	for _, bad := range []string{"--dangerously-skip-permissions", "../../etc", "not a uuid", "x;y"} {
+		err := b.Infer(context.Background(), core.InferRequest{
+			SessionID: bad,
+			Messages:  []core.Message{core.NewTextMessage(core.RoleUser, "x")},
+		}, &collectSink{})
+		if err == nil || strings.Contains(err.Error(), "spawn") {
+			t.Errorf("session id %q must be refused before spawn, got %v", bad, err)
+		}
+	}
+}
+
+func TestInferReportsSessionID(t *testing.T) {
+	// The CLI's init line carries the session id; forward it so the caller
+	// can resume later.
+	script := `
+cat > /dev/null
+echo '{"type":"system","subtype":"init","session_id":"984f3680-403a-4275-9b3f-eeed6b8100bf"}'
+echo '{"type":"result","subtype":"success","usage":{"input_tokens":1,"output_tokens":1}}'
+`
+	b := newTestBackend(t, core.BackendConfig{CLIPath: stubCLI(t, script)})
+	sink := &collectSink{}
+	if err := b.Infer(context.Background(), core.InferRequest{
+		Messages: []core.Message{core.NewTextMessage(core.RoleUser, "x")},
+	}, sink); err != nil {
+		t.Fatalf("Infer: %v", err)
+	}
+	var got string
+	for _, ev := range sink.events {
+		if ev.Kind == core.EventSession {
+			got = ev.SessionID
+		}
+	}
+	if got != "984f3680-403a-4275-9b3f-eeed6b8100bf" {
+		t.Errorf("session id = %q", got)
 	}
 }
 

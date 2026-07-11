@@ -73,12 +73,12 @@ emits and the relay currently drops.
   events (`X-Agent-Traces: true` → `agent_tool_use` / `agent_tool_result`,
   off by default so strict SDKs are unaffected) and a `trace.jsonl` written
   into retained output directories.
-- [ ] **Session continuity (`--resume`).** Every stream-json line carries a
-  `session_id` that the relay discards. Expose it (`X-Session-Id` response
-  header), accept it back on a later request, and pass `--resume` to the CLI:
-  the agent keeps its context and prompt cache across requests. Composes with
-  `X-Agentic-Keep-Outputs` to give a persistent agentic workspace; likely
-  requires reusing the retained working directory.
+- [x] **Session continuity (`--resume`).** The backend conversation id is
+  returned as `X-Session-Id` and accepted back to resume; retained outputs
+  can be pinned with `X-Agentic-Outputs` to keep the workspace stable
+  (the CLI keys sessions by working directory), which together give a
+  persistent agentic workspace — files *and* memory. Resuming without a
+  stable workspace is refused with an explanatory 400.
 - [x] **Per-request cost accounting.** The CLI's reported `total_cost_usd`
   and token counts now ride on `EventMessageStop`; every served request logs
   a `request usage` line (tokens + `cost_usd`, correlated by `X-Request-Id`)

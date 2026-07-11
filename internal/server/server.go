@@ -35,13 +35,25 @@ type startedSink interface {
 // wire format having to expose them.
 type usageSink struct {
 	core.EventSink
-	usage core.Usage
-	trace *traceWriter // nil unless outputs are retained
+	usage     core.Usage
+	trace     *traceWriter // nil unless outputs are retained
+	onSession func(string) // reports the backend session id
 }
 
 func (u *usageSink) Emit(ctx context.Context, ev core.Event) error {
-	if ev.Kind == core.EventMessageStop && ev.Usage != nil {
-		u.usage = *ev.Usage
+	switch ev.Kind {
+	case core.EventMessageStop:
+		if ev.Usage != nil {
+			u.usage = *ev.Usage
+		}
+	case core.EventSession:
+		// Backend-internal: report the id to the caller as a header (the
+		// init line precedes any content, so the header is still settable)
+		// and never forward it to a wire sink.
+		if u.onSession != nil {
+			u.onSession(ev.SessionID)
+		}
+		return nil
 	}
 	u.trace.record(ev)
 	return u.EventSink.Emit(ctx, ev)
@@ -117,6 +129,16 @@ func (t *traceWriter) record(ev core.Event) {
 func (t *traceWriter) Close() {
 	if t != nil && t.f != nil {
 		t.f.Close()
+	}
+}
+
+// sessionHeader returns a callback that reports the backend's conversation
+// id to the caller, so a later request can resume it with X-Session-Id.
+func (s *server) sessionHeader(w http.ResponseWriter) func(string) {
+	return func(id string) {
+		if id != "" {
+			w.Header().Set("X-Session-Id", id)
+		}
 	}
 }
 
@@ -218,17 +240,36 @@ func New(cfg config.Config, backend core.Backend, opts ...Option) (http.Handler,
 	return obs.WithRequestID(s.logger, mux), nil
 }
 
-// prepareOutputs honors X-Agentic-Keep-Outputs: the request's working
-// directory is allocated in the output store and survives the request under
-// an unguessable id, returned via the X-Agentic-Outputs response header.
+// prepareOutputs resolves the request's workspace:
+//
+//   - X-Agentic-Outputs: <id> pins an existing retained directory (that is
+//     how a caller resumes work in the same workspace);
+//   - X-Agentic-Keep-Outputs: true allocates a new retained directory.
+//
+// Both require an agentic-authorized request, and both echo the id back in
+// the X-Agentic-Outputs response header.
 func (s *server) prepareOutputs(w http.ResponseWriter, r *http.Request, req *core.InferRequest, agentic bool, writeErr func(http.ResponseWriter, int, string)) bool {
-	if r.Header.Get("X-Agentic-Keep-Outputs") != "true" {
+	pinned := r.Header.Get("X-Agentic-Outputs")
+	keep := r.Header.Get("X-Agentic-Keep-Outputs") == "true"
+	if pinned == "" && !keep {
 		return true
 	}
 	if !agentic {
-		writeErr(w, http.StatusBadRequest, "X-Agentic-Keep-Outputs requires an agentic-authorized request")
+		writeErr(w, http.StatusBadRequest, "retained outputs require an agentic-authorized request")
 		return false
 	}
+
+	if pinned != "" {
+		dir, err := s.outputs.Dir(pinned)
+		if err != nil {
+			writeErr(w, http.StatusNotFound, "unknown or expired outputs id")
+			return false
+		}
+		req.OutputDir = dir
+		w.Header().Set("X-Agentic-Outputs", pinned)
+		return true
+	}
+
 	id := outputs.NewID()
 	dir, err := s.outputs.Create(id)
 	if err != nil {
@@ -239,6 +280,24 @@ func (s *server) prepareOutputs(w http.ResponseWriter, r *http.Request, req *cor
 	req.OutputDir = dir
 	w.Header().Set("X-Agentic-Outputs", id)
 	s.logger.Info("agentic outputs retained", "outputs_id", id, "id", w.Header().Get("X-Request-Id"))
+	return true
+}
+
+// prepareSession honors X-Session-Id. Backends key their sessions by working
+// directory, so resuming is refused where the workdir is ephemeral (an
+// agentic request without a retained workspace): failing here beats the
+// backend's opaque "no conversation found".
+func (s *server) prepareSession(w http.ResponseWriter, r *http.Request, req *core.InferRequest, writeErr func(http.ResponseWriter, int, string)) bool {
+	id := r.Header.Get("X-Session-Id")
+	if id == "" {
+		return true
+	}
+	if req.Agentic && req.OutputDir == "" {
+		writeErr(w, http.StatusBadRequest,
+			"resuming a session requires a stable workspace: retain outputs (X-Agentic-Keep-Outputs) and pin them back with X-Agentic-Outputs, or resume in inference mode")
+		return false
+	}
+	req.SessionID = id
 	return true
 }
 
@@ -406,6 +465,9 @@ func (s *server) handleMessages(w http.ResponseWriter, r *http.Request) {
 	if !s.prepareOutputs(w, r, &req, agentic, anthropic.WriteError) {
 		return
 	}
+	if !s.prepareSession(w, r, &req, anthropic.WriteError) {
+		return
+	}
 	req.Traces = r.Header.Get("X-Agent-Traces") == "true"
 	id := "msg_" + obs.NewRequestID()
 	if req.Stream {
@@ -440,6 +502,9 @@ func (s *server) handleChat(w http.ResponseWriter, r *http.Request) {
 	if !s.prepareOutputs(w, r, &req, agentic, openai.WriteError) {
 		return
 	}
+	if !s.prepareSession(w, r, &req, openai.WriteError) {
+		return
+	}
 	id := "chatcmpl-" + obs.NewRequestID()
 	if req.Stream {
 		sink := openai.NewStreamSink(w, id, req.Model)
@@ -463,7 +528,9 @@ func (s *server) run(w http.ResponseWriter, r *http.Request, req core.InferReque
 	trace := s.traceFor(req)
 	defer trace.Close()
 
-	observed := &usageStreamSink{usageSink: usageSink{EventSink: sink, trace: trace}, inner: sink}
+	observed := &usageStreamSink{usageSink: usageSink{
+		EventSink: sink, trace: trace, onSession: s.sessionHeader(w),
+	}, inner: sink}
 	err := s.dispatcher.Do(r.Context(), req, observed)
 	s.accountUsage(w, r, observed.usage)
 	if err == nil {
@@ -481,7 +548,7 @@ func (s *server) runCollected(w http.ResponseWriter, r *http.Request, req core.I
 	trace := s.traceFor(req)
 	defer trace.Close()
 
-	observed := &usageSink{EventSink: sink, trace: trace}
+	observed := &usageSink{EventSink: sink, trace: trace, onSession: s.sessionHeader(w)}
 	err := s.dispatcher.Do(r.Context(), req, observed)
 	s.accountUsage(w, r, observed.usage)
 	if err != nil {

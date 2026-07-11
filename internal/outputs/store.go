@@ -62,6 +62,19 @@ func (s *Store) Create(id string) (string, error) {
 	return dir, nil
 }
 
+// Dir resolves an existing retained directory, so a caller can pin it as the
+// workspace of a follow-up request.
+func (s *Store) Dir(id string) (string, error) {
+	dir, err := s.dir(id)
+	if err != nil {
+		return "", ErrNotFound
+	}
+	if _, err := os.Stat(dir); err != nil {
+		return "", ErrNotFound
+	}
+	return dir, nil
+}
+
 // List returns every regular file under id, relative paths, stable order.
 func (s *Store) List(id string) ([]FileInfo, error) {
 	dir, err := s.dir(id)

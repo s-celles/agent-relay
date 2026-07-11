@@ -17,7 +17,8 @@ and some are structurally impossible. This page is the honest map.
 | `stop_reason` richness | ⚠️ reduced | Only `end_turn`/`tool_use`; no `max_tokens`/`refusal`/`pause_turn` |
 | Client-defined tools (`tools[]`) | ❌ rejected (400) | The CLI has no raw tool-calling mode |
 | Structured outputs (JSON schema, `strict`) | ❌ absent | No CLI equivalent; prompt engineering only |
-| Assistant prefill / exact turn replay | ❌ absent | History is a text approximation, not token-exact |
+| Assistant prefill / exact turn replay | ❌ absent | History is a text approximation — but see session continuity below |
+| Multi-turn continuity | ✅ via `X-Session-Id` | The backend keeps its own conversation; no transcript replay needed |
 | `temperature`, `top_p`, `top_k`, `stop_sequences` | ❌ dropped (signaled) | No CLI equivalents; the relay warns rather than ignoring silently |
 | Thinking/effort control per request | ❌ absent | The CLI decides internally |
 | Prompt caching control (`cache_control`) | ❌ absent | The CLI manages its cache; no client visibility |

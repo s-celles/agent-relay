@@ -29,13 +29,14 @@ type wireContentBlock struct {
 // Unknown types and fields are ignored rather than rejected, so schema drift
 // in the CLI degrades gracefully instead of breaking the relay (DQ-1).
 type streamLine struct {
-	Type    string     `json:"type"`
-	Subtype string     `json:"subtype"`
-	IsError bool       `json:"is_error"`
-	Result  string     `json:"result"`
-	Usage   *wireUsage `json:"usage"`
-	CostUSD float64    `json:"total_cost_usd"`
-	Message *struct {
+	Type      string     `json:"type"`
+	Subtype   string     `json:"subtype"`
+	IsError   bool       `json:"is_error"`
+	Result    string     `json:"result"`
+	Usage     *wireUsage `json:"usage"`
+	CostUSD   float64    `json:"total_cost_usd"`
+	SessionID string     `json:"session_id"`
+	Message   *struct {
 		Content []wireContentBlock `json:"content"`
 	} `json:"message"`
 	Event *struct {
@@ -60,6 +61,13 @@ func parseStreamJSONLine(line []byte) []core.Event {
 	}
 
 	switch l.Type {
+	case "system":
+		// The init line names the conversation; forward it so the caller can
+		// resume this session later (it arrives before any content).
+		if l.Subtype == "init" && l.SessionID != "" {
+			return []core.Event{{Kind: core.EventSession, SessionID: l.SessionID}}
+		}
+
 	case "stream_event":
 		if l.Event == nil {
 			return nil
