@@ -23,6 +23,10 @@ failure aborts startup — the relay never limps along on a half-read config.
 | `RELAY_AGENTIC_TOKENS` | *(empty)* | Comma-separated agentic credentials, mandatory when per-request authz is on. Keep them distinct from `RELAY_TOKENS`. |
 | `RELAY_AGENTIC_ARGS` | *(empty)* | Permission flags appended to the CLI when agentic mode is on. |
 
+The `RELAY_AGENTIC_*` variables switch the relay between its two execution
+modes; [execution-modes.md](execution-modes.md) explains what each mode can
+and cannot do.
+
 ## Startup guards
 
 `Config.Validate()` encodes the project's anti-goals as invariants. The relay

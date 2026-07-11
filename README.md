@@ -13,6 +13,23 @@ The relay spawns one supervised CLI subprocess per request, translates its
 security invariant: **there is no configuration in which an unauthenticated
 caller on a non-loopback interface reaches a backend.**
 
+## Two execution modes
+
+| | Inference (default) | Agentic (opt-in) |
+|---|---|---|
+| What a request can do | produce text, spend tokens | also create/edit files, run granted commands |
+| CLI permission flags | none, ever | operator-chosen, per authorized request |
+| Working directory | static | ephemeral per request, auto-deleted |
+| Extra credential | — | `X-Agentic-Authorization` header |
+
+In **inference mode** the CLI's tools hit a permission wall that nothing in a
+non-interactive subprocess can lift — callers get text, never side effects.
+**Agentic mode** deliberately lifts that wall behind four layers of consent:
+an operator flag, startup guards, an optional per-request credential, and a
+backend re-check. Each agentic request runs isolated in its own throwaway
+directory. The full reasoning, guarantees, and caveats are in
+[docs/execution-modes.md](docs/execution-modes.md).
+
 ## Quick start
 
 ```sh
@@ -37,6 +54,7 @@ curl -N http://127.0.0.1:18082/v1/messages \
 ## Documentation
 
 - [Architecture](docs/architecture.md) — the three-layer pipeline and neutral model
+- [Execution modes](docs/execution-modes.md) — inference vs agentic, in depth
 - [Configuration](docs/configuration.md) — environment variables and startup guards
 - [API](docs/api.md) — endpoints, wire formats, error shapes
 - [Deployment](docs/deployment.md) — Docker, docker-compose, NixOS notes

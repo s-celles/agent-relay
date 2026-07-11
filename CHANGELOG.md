@@ -21,6 +21,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   agentically; others stay inference-only, invalid credentials get 403
   before any spawn. Backends independently refuse agentic requests they are
   not configured for.
+- `docs/execution-modes.md`: in-depth explanation of inference vs agentic
+  mode (enforcement, guarantees, caveats), summarized in the README.
 
 ### Fixed
 

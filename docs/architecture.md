@@ -84,3 +84,6 @@ Queued ───────────────▶ Starting ─────
   directory** (created under `RELAY_CLAUDE_WORKDIR`, or the system temp dir),
   removed once the subprocess is reaped — concurrent requests never see each
   other's files, and no state persists between requests.
+
+The full comparison of the two execution modes — enforcement mechanisms,
+guarantees, and caveats — is in [execution-modes.md](execution-modes.md).

@@ -81,7 +81,9 @@ X-Agentic-Authorization: Bearer <agentic-token>
   response is also 403.
 
 Authorized agentic requests run with the operator-configured permission
-flags, each in its own ephemeral working directory.
+flags, each in its own ephemeral working directory. See
+[execution-modes.md](execution-modes.md) for the full inference-vs-agentic
+comparison.
 
 ## `GET /health`
 
