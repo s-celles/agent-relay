@@ -122,7 +122,7 @@ sequenceDiagram
 
     Client->>Relay: POST /v1/messages (tools[])
     Relay->>Bridge: new session (exposes your tools)
-    Relay->>CLI: spawn --mcp-config --tools ""
+    Relay->>CLI: spawn --mcp-config --disallowedTools Bash,Read,…
     CLI->>Bridge: tools/list
     CLI->>Bridge: tools/call get_weather
     Note over Bridge,CLI: subprocess parks<br/>(blocked, holds a slot)
@@ -139,13 +139,24 @@ sequenceDiagram
 **How it works.** The claude CLI has no raw tool-calling mode — but it speaks
 MCP. So the relay hosts a small MCP server exposing *your* tools and points
 the CLI at it (`--mcp-config`, with `--allowedTools` restricted to those tool
-names). Crucially, it also disables the CLI's entire **built-in** toolset
-(`--tools ""`): otherwise the model has both your tools and its own native
-`Write`/`Read`/`Bash`, and it prefers the native ones — so your tools would
-never fire (the model just narrates), and any granted permission would run the
-native tools on the *relay host* instead of routing back to you. With the
-built-ins off, every tool call goes through your tools, which is the raw-model
-contract an agent client expects.
+names). Crucially, it also turns off the CLI's **built-in** tools, denying them
+by name (`--disallowedTools Bash,Read,Write,…`): otherwise the model has both
+your tools and its own native `Write`/`Read`/`Bash`, and it prefers the native
+ones — so your tools would never fire (the model just narrates), and any
+granted permission would run the native tools on the *relay host* instead of
+routing back to you. With the built-ins denied, every tool call goes through
+your tools, which is the raw-model contract an agent client expects.
+
+!!! warning "Why not `--tools ""`?"
+
+    The CLI hands the model its MCP tools only while at least one **built-in**
+    tool survives. Silence them all — `--tools ""`, `--disallowedTools "*"`, or
+    a deny list sparing none — and the bridge's `mcp__relay__*` tools are
+    dropped along with them. The model is then left with no tools at all: it
+    narrates the tool call as prose, no `tool_use` ever reaches you, and your
+    agent waits for a turn that never ends. The relay therefore leaves exactly
+    one inert built-in registered (`ReportFindings`, which touches neither the
+    host nor the network). Observed on claude 2.1.207.
 
 When the model calls one, the MCP handler **parks**: the relay answers your
 HTTP request with the `tool_use` block while the subprocess stays alive and

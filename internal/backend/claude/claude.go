@@ -93,24 +93,61 @@ func (b *Backend) buildArgs(req core.InferRequest) []string {
 	}
 	// Client-defined tools reach the CLI as an MCP server the relay hosts.
 	//
-	//   --tools "" turns off the CLI's entire built-in toolset. Without it the
-	//   model has both the caller's MCP tools and its own native Write/Read/
-	//   Bash, and it prefers the native ones — so the caller's tools never fire
-	//   (the model just narrates), and a granted permission would run the
+	//   --disallowedTools turns off the CLI's own tools by name. Without that
+	//   the model has both the caller's MCP tools and its own native Write/
+	//   Read/Bash, and it prefers the native ones — so the caller's tools never
+	//   fire (the model just narrates), and a granted permission would run the
 	//   native tools on the relay host instead of routing back to the caller.
-	//   Disabling them forces every call through the caller's tools, which is
-	//   the raw-model contract an agent client (OpenCode, LangChain, …) expects.
+	//   Denying them forces every call through the caller's tools, which is the
+	//   raw-model contract an agent client (OpenCode, LangChain, …) expects.
 	//
 	//   --allowedTools then pre-approves those MCP tools by name, so the CLI
 	//   invokes them without a permission prompt.
 	if tb := req.ToolBridge; tb != nil && len(tb.AllowedTools) > 0 {
 		args = append(args,
-			"--tools", "",
+			"--disallowedTools", strings.Join(disallowedBuiltins(), ","),
 			"--mcp-config", tb.Config,
 			"--allowedTools", strings.Join(tb.AllowedTools, ","),
 		)
 	}
 	return args
+}
+
+// keptBuiltin is the one CLI tool left registered on client-tool requests.
+//
+// The CLI hands the model its MCP tools only while at least one *built-in*
+// tool survives: silence them all — `--tools ""`, or a --disallowedTools list
+// that spares none — and the bridge's mcp__relay__* tools are dropped along
+// with them. The model then has nothing to call, narrates the tool call as
+// prose, and the caller waits forever for a tool_use that never comes. So one
+// built-in stays: ReportFindings, which only echoes a list back to the CLI —
+// it touches neither the host nor the network. Observed on claude 2.1.207;
+// `just tools-check` is what catches it, the stub CLI cannot.
+const keptBuiltin = "ReportFindings"
+
+// builtinTools are the CLI's own tools (claude 2.x). Denying by name is what
+// the CLI supports here, so a tool added by a future release is not covered
+// until this list grows — hence the deny-known-tools shape rather than a
+// wildcard, which the CLI also applies to the MCP tools.
+var builtinTools = []string{
+	"Bash", "BashOutput", "CronCreate", "CronDelete", "CronList", "DesignSync",
+	"Edit", "EnterWorktree", "ExitPlanMode", "ExitWorktree", "Glob", "Grep",
+	"KillShell", "Monitor", "NotebookEdit", "PushNotification", "Read",
+	"RemoteTrigger", "ScheduleWakeup", "SendMessage", "Skill", "SlashCommand",
+	"Task", "TaskCreate", "TaskGet", "TaskList", "TaskOutput", "TaskStop",
+	"TaskUpdate", "TodoWrite", "ToolSearch", "WebFetch", "WebSearch",
+	"Workflow", "Write",
+}
+
+// disallowedBuiltins is every built-in but keptBuiltin.
+func disallowedBuiltins() []string {
+	out := make([]string, 0, len(builtinTools))
+	for _, t := range builtinTools {
+		if t != keptBuiltin {
+			out = append(out, t)
+		}
+	}
+	return out
 }
 
 // sessionIDPattern matches the CLI's session ids (UUIDs). Validated before

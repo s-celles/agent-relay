@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -472,38 +473,54 @@ func TestBuildArgsToolBridge(t *testing.T) {
 	if !strings.Contains(joined, "--allowedTools mcp__relay__get_weather,mcp__relay__lookup") {
 		t.Errorf("args missing the tool allowlist: %q", joined)
 	}
-	for _, forbidden := range []string{"Write", "Bash", "--permission-mode", "--dangerously"} {
+	for _, forbidden := range []string{"--permission-mode", "--dangerously"} {
 		if strings.Contains(joined, forbidden) {
 			t.Errorf("tool requests must stay inference-mode; args contain %q: %q", forbidden, joined)
 		}
 	}
-	// The built-in toolset must be turned off (`--tools ""`). Otherwise the
-	// model prefers its own native Write/Read over the caller's MCP tools — the
-	// caller's tools never fire, and a granted permission would run the native
-	// ones on the relay host instead of routing back to the caller.
-	if !hasFlagValue(args, "--tools", "") {
-		t.Errorf("client-tool requests must disable the built-in toolset with --tools \"\": %q", joined)
+	// The CLI's own tools must be denied by name, never with `--tools`: that
+	// flag drops the *MCP* tools too, leaving the model with nothing to call —
+	// it then narrates a tool call as prose and the caller's tools never fire.
+	if strings.Contains(joined, "--tools") {
+		t.Errorf("--tools also unregisters the bridge's MCP tools; deny the built-ins by name: %q", joined)
+	}
+	denied := flagValue(args, "--disallowedTools")
+	if denied == "" {
+		t.Fatalf("client-tool requests must deny the CLI's built-in tools: %q", joined)
+	}
+	// The tools that would run on the relay host instead of routing back to the
+	// caller are the ones that must not survive.
+	for _, name := range []string{"Bash", "Read", "Write", "Edit", "WebFetch", "Task"} {
+		if !slices.Contains(strings.Split(denied, ","), name) {
+			t.Errorf("built-in %q must be denied on client-tool requests: %q", name, denied)
+		}
+	}
+	// The CLI registers the bridge's MCP tools only when at least one built-in
+	// survives: deny every last one and the MCP tools vanish with them. So one
+	// inert built-in is deliberately left registered (see keptBuiltin).
+	if slices.Contains(strings.Split(denied, ","), keptBuiltin) {
+		t.Errorf("%q must stay registered, or the CLI drops the MCP tools: %q", keptBuiltin, denied)
 	}
 	// No bridge, no flags.
-	plain := b.buildArgs(core.InferRequest{Model: "m"})
-	if strings.Contains(strings.Join(plain, " "), "--mcp-config") {
+	plain := strings.Join(b.buildArgs(core.InferRequest{Model: "m"}), " ")
+	if strings.Contains(plain, "--mcp-config") {
 		t.Error("--mcp-config must not appear without a tool bridge")
 	}
-	if hasFlagValue(plain, "--tools", "") {
-		t.Error("--tools must not be forced when the caller supplied no tools")
+	if strings.Contains(plain, "--disallowedTools") {
+		t.Error("the built-ins must not be denied when the caller supplied no tools")
 	}
 }
 
-// hasFlagValue reports whether args contains flag immediately followed by
-// value — the reliable way to assert an empty-string argument, which vanishes
-// when args are joined for display.
-func hasFlagValue(args []string, flag, value string) bool {
+// flagValue returns the argument following flag, or "" when the flag is
+// absent — reading the value out of argv rather than out of a joined string,
+// which would blur the boundary between a flag and its value.
+func flagValue(args []string, flag string) string {
 	for i, a := range args {
-		if a == flag && i+1 < len(args) && args[i+1] == value {
-			return true
+		if a == flag && i+1 < len(args) {
+			return args[i+1]
 		}
 	}
-	return false
+	return ""
 }
 
 func TestBuildArgsResume(t *testing.T) {

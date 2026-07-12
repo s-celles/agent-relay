@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Client-defined tools never fired against claude 2.1.207**: an agent client
+  (OpenCode, LangChain, …) hung mid-conversation, waiting for a `tool_use` that
+  never came. The relay disabled the CLI's built-in toolset with `--tools ""`,
+  which — despite being documented as selecting "from the built-in set" — also
+  unregisters the tools served over `--mcp-config`, i.e. the caller's own tools.
+  The model was left with no tools at all and narrated the tool call as prose
+  instead of emitting it. The built-ins are now denied by name
+  (`--disallowedTools`), keeping one inert built-in registered because the CLI
+  drops the MCP tools along with the last built-in. Measured over a "read a
+  file" turn against claude 2.1.207: 0/6 tool calls before, 12/12 after.
+
 ## [0.9.2] - 2026-07-12
 
 ### Added

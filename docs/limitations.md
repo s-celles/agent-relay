@@ -66,6 +66,13 @@ to API key).
 - **Stop reasons.** The stream-json output does not distinguish
   `max_tokens`, `refusal`, or `pause_turn`; the relay reports
   `end_turn`/`tool_use` plus in-band errors.
+- **A coding persona, even behind your tools.** The CLI's own system prompt
+  makes the model a software-engineering agent, and it declines client tools it
+  reads as off-topic: asked for the weather with a `get_weather` tool attached,
+  it answers that weather is *"outside the scope of what I'm designed to help
+  with"* — without calling the tool. The same turn with a `read_file` tool is
+  served at once. Send your own `system` prompt (the relay forwards it as
+  `--system-prompt`) when your tools live outside coding.
 - **Latency.** Every request pays a CLI startup (a Node process) on top of
   inference. Interactive chat is fine; latency-sensitive pipelines will feel
   it.
