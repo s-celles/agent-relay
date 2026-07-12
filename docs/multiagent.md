@@ -3,8 +3,20 @@
 A runnable three-agent system — a **coder**, a **reviewer**, a **summariser** —
 orchestrated over A2A, all thinking through **one relay**.
 
-Code: [`docs/examples/multiagent/`](https://github.com/s-celles/agent-relay/tree/main/docs/examples/multiagent)
-(`agents.py`, `orchestrator.py`).
+Two implementations of the same architecture — pick the stack that matches your
+deploy:
+
+| | stack | code |
+|---|---|---|
+| **Python** | the `a2a-sdk` (agents + orchestrator) and the `anthropic` SDK (the brain) | [`docs/examples/multiagent-py-a2a-sdk/`](https://github.com/s-celles/agent-relay/tree/main/docs/examples/multiagent-py-a2a-sdk) |
+| **Go, no Python at all** | the `a2a` CLI from `a2a-go`, wrapping a shell script | [`docs/examples/multiagent-go-a2a-cli/`](https://github.com/s-celles/agent-relay/tree/main/docs/examples/multiagent-go-a2a-cli) |
+
+The Python one is described below. The Go one carries its own
+[README](https://github.com/s-celles/agent-relay/tree/main/docs/examples/multiagent-go-a2a-cli)
+— same three roles, same single relay, and three gotchas in the `a2a` CLI that
+its `--help` does not mention (the `--exec` I/O contract, `a2a send` printing a
+task envelope rather than the reply, and a 30 s default timeout that kills the
+chain at the second agent).
 
 ## One relay, several agents
 
@@ -95,16 +107,16 @@ Start the three agents, each in its own terminal (or with `&`):
 export RELAY_URL=http://127.0.0.1:18082
 export RELAY_TOKEN=$(just print-token)
 
-.venv/bin/python docs/examples/multiagent/agents.py coder       # :9101
-.venv/bin/python docs/examples/multiagent/agents.py reviewer    # :9102
-.venv/bin/python docs/examples/multiagent/agents.py summarizer  # :9103
+.venv/bin/python docs/examples/multiagent-py-a2a-sdk/agents.py coder       # :9101
+.venv/bin/python docs/examples/multiagent-py-a2a-sdk/agents.py reviewer    # :9102
+.venv/bin/python docs/examples/multiagent-py-a2a-sdk/agents.py summarizer  # :9103
 ```
 
 Then orchestrate:
 
 ```sh
 RELAY_TOKEN=$(just print-token) \
-  .venv/bin/python docs/examples/multiagent/orchestrator.py \
+  .venv/bin/python docs/examples/multiagent-py-a2a-sdk/orchestrator.py \
   "a function that checks whether a string is a palindrome"
 ```
 

@@ -1,6 +1,9 @@
 #!/usr/bin/env python3
 """An A2A orchestrator: discovers three agents by their cards, then chains them.
 
+Stack: Python — the `a2a-sdk` package (A2A protocol) and the `anthropic` SDK
+(the relay's Anthropic wire). The all-Go sibling is ../multiagent-go-a2a-cli.
+
 It knows nothing about the agents beyond their base URLs. It reads each Agent
 Card to learn what the agent is and where to reach it, then delegates over A2A —
 exactly as it would to an agent someone else wrote, on another machine, in

@@ -1,0 +1,77 @@
+# Multi-agent A2A, all-Go. Run `just` to list the recipes.
+#
+# Three A2A agents (researcher, critic, writer), one relay. The relay is Go and
+# the `a2a` binary is Go — nothing here needs a Python runtime.
+
+a2a_version := "v2.3.1"
+researcher := "http://127.0.0.1:9201"
+critic := "http://127.0.0.1:9202"
+writer := "http://127.0.0.1:9203"
+
+default:
+    @just --list
+
+# Install the a2a CLI and check what agent.sh shells out to.
+setup:
+    @chmod +x agent.sh
+    @command -v jq   >/dev/null || { echo "jq is required (brew install jq)"; exit 1; }
+    @command -v curl >/dev/null || { echo "curl is required"; exit 1; }
+    go install github.com/a2aproject/a2a-go/v2/cmd/a2a@{{a2a_version}}
+    @echo "ok — start a relay (just run, in the repo root), then: just agents"
+
+# Start the three agents, each wrapping agent.sh as an A2A server. ROLE is the
+# only difference between them: one script, three identities.
+agents: setup
+    #!/usr/bin/env bash
+    set -euo pipefail
+    a2a="$(go env GOPATH)/bin/a2a"
+    for spec in "researcher:9201:Gathers facts and open questions" \
+                "critic:9202:Finds the weakest claims and what would falsify them" \
+                "writer:9203:Turns notes and critique into a final answer"; do
+      role="${spec%%:*}"; rest="${spec#*:}"; port="${rest%%:*}"; desc="${rest#*:}"
+      ROLE="$role" nohup "$a2a" serve --exec ./agent.sh --name "$role" \
+        --description "$desc" --port "$port" --quiet >/dev/null 2>&1 &
+    done
+    sleep 2
+    echo "agents up: 9201 researcher · 9202 critic · 9203 writer"
+
+# They are real A2A servers — resolve each Agent Card to prove it.
+cards:
+    #!/usr/bin/env bash
+    a2a="$(go env GOPATH)/bin/a2a"
+    for url in {{researcher}} {{critic}} {{writer}}; do
+      "$a2a" discover "$url" | head -3
+      echo
+    done
+
+# Chain the three: research → critique → write.
+run task:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    a2a="$(go env GOPATH)/bin/a2a"
+    # Two things the CLI's help does not make obvious, both verified against
+    # a2a-go v2.3.1:
+    #   - `a2a send` prints a *task envelope*, not the bare reply — the answer
+    #     lives in the artifacts, so ask for JSON and pull the text out;
+    #   - `--timeout` defaults to 30s, which a real model on a real prompt blows
+    #     through. Give it room, or the second agent dies mid-chain.
+    reply() { "$a2a" send --timeout 300s "$1" "$2" -o json | jq -r '[.artifacts[]?.parts[]?.text] | join("")'; }
+    show() { sed 's/^/      /'; }
+    echo "[1] researcher (haiku — cheap)"
+    notes=$(reply {{researcher}} "{{task}}")
+    printf '%s\n' "$notes" | show
+    printf '\n[2] critic (sonnet)\n'
+    critique=$(reply {{critic}} "$(printf 'Request: %s\n\nResearcher notes:\n%s' "{{task}}" "$notes")")
+    printf '%s\n' "$critique" | show
+    printf '\n[3] writer (sonnet)\n'
+    final=$(reply {{writer}} "$(printf 'Request: %s\n\nNotes:\n%s\n\nCritique:\n%s' "{{task}}" "$notes" "$critique")")
+    printf '%s\n' "$final" | show
+
+# agents + run, in one shot.
+demo task: agents
+    @just run "{{task}}"
+
+# Stop the three agents.
+clean:
+    @pkill -f "a2a serve --exec ./agent.sh" 2>/dev/null || true
+    @echo "agents stopped"

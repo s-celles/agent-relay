@@ -1,6 +1,9 @@
 #!/usr/bin/env python3
 """Three specialised A2A agents, all backed by ONE agent-relay.
 
+Stack: Python — the `a2a-sdk` package (A2A protocol) and the `anthropic` SDK
+(the relay's Anthropic wire). The all-Go sibling is ../multiagent-go-a2a-cli.
+
 The point of a multi-agent system is that the agents differ by **role** — a
 coder, a reviewer, a summariser — not by which model they happen to run on. So
 the specialisation lives here, in the agents; the relay below them is just the
