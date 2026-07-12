@@ -7,18 +7,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.3] - 2026-07-12
+
 ### Fixed
 
-- **Client-defined tools never fired against claude 2.1.207**: an agent client
-  (OpenCode, LangChain, …) hung mid-conversation, waiting for a `tool_use` that
-  never came. The relay disabled the CLI's built-in toolset with `--tools ""`,
-  which — despite being documented as selecting "from the built-in set" — also
-  unregisters the tools served over `--mcp-config`, i.e. the caller's own tools.
-  The model was left with no tools at all and narrated the tool call as prose
-  instead of emitting it. The built-ins are now denied by name
-  (`--disallowedTools`), keeping one inert built-in registered because the CLI
-  drops the MCP tools along with the last built-in. Measured over a "read a
-  file" turn against claude 2.1.207: 0/6 tool calls before, 12/12 after.
+- **Client-defined tools still did not fire against claude 2.1.207.** The 0.9.2
+  fix (deny the built-ins by name, spare `ReportFindings`) treated a symptom.
+  The real cause is that the CLI **defers** an MCP server's tools: it connects to
+  the bridge and calls `tools/list`, but keeps the schemas out of the model's
+  tool list until the model loads them with its `ToolSearch` built-in — which the
+  relay's deny list turned off. The caller's tools were therefore unreachable,
+  and the model, seeing none, narrated the call as prose; an agent client
+  (OpenCode, LangChain, …) hung waiting for a `tool_use` that never came. The
+  bridge's MCP config now sets `alwaysLoad`, which inlines the caller's tools in
+  the prompt instead of deferring them. `just tools-check` against claude
+  2.1.207, 8 checks on each of haiku/sonnet/opus: **10/24 before, 24/24 after**.
+- **`ReportFindings` is no longer left registered.** With `alwaysLoad` the CLI no
+  longer needs a surviving built-in, so *every* built-in is denied — the model's
+  toolset is now exactly the caller's tools, with nothing it never asked for.
+
+### Security
+
+- **Client-tool requests no longer inherit the operator's MCP servers.** The CLI
+  merges `--mcp-config` with the servers configured in `~/.claude.json`, so a
+  caller's request could silently gain tools it never declared — and the relay
+  would have executed them on the host rather than routing them back. Client-tool
+  requests now pass `--strict-mcp-config`, confining the subprocess to the
+  bridge's own server.
+
+### Changed
+
+- **`docs/limitations.md` no longer claims the CLI's coding persona declines
+  off-topic tools.** That was a misreading of the deferral bug above: the tools
+  were unreachable, and the model rationalized their absence as being outside its
+  scope. With the tools actually present, every model tested calls `get_weather`.
 
 ## [0.9.2] - 2026-07-12
 
@@ -503,7 +525,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Dockerfile (multi-stage, bundles the `claude` CLI) and docker-compose
   example; deployment documentation.
 
-[Unreleased]: https://github.com/s-celles/agent-relay/compare/v0.7.0...HEAD
+[Unreleased]: https://github.com/s-celles/agent-relay/compare/v0.9.3...HEAD
+[0.9.3]: https://github.com/s-celles/agent-relay/compare/v0.9.2...v0.9.3
 [0.7.0]: https://github.com/s-celles/agent-relay/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/s-celles/agent-relay/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/s-celles/agent-relay/compare/v0.4.0...v0.5.0

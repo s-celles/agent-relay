@@ -495,11 +495,22 @@ func TestBuildArgsToolBridge(t *testing.T) {
 			t.Errorf("built-in %q must be denied on client-tool requests: %q", name, denied)
 		}
 	}
-	// The CLI registers the bridge's MCP tools only when at least one built-in
-	// survives: deny every last one and the MCP tools vanish with them. So one
-	// inert built-in is deliberately left registered (see keptBuiltin).
-	if slices.Contains(strings.Split(denied, ","), keptBuiltin) {
-		t.Errorf("%q must stay registered, or the CLI drops the MCP tools: %q", keptBuiltin, denied)
+	// Every built-in is denied — none is spared. The bridge's MCP tools survive
+	// that because its config sets alwaysLoad (see toolbridge.Session.MCPConfig),
+	// which inlines them in the prompt instead of deferring them behind
+	// ToolSearch. Sparing a built-in here would only put a tool the caller never
+	// asked for in the model's list.
+	for _, name := range builtinTools {
+		if !slices.Contains(strings.Split(denied, ","), name) {
+			t.Errorf("built-in %q must be denied on client-tool requests: %q", name, denied)
+		}
+	}
+	// --strict-mcp-config confines the subprocess to the bridge's server: without
+	// it the CLI also loads the operator's own MCP servers (~/.claude.json), so a
+	// caller's request would silently gain tools it never declared.
+	if !slices.Contains(args, "--strict-mcp-config") {
+		t.Errorf("client-tool requests must pass --strict-mcp-config, or the operator's "+
+			"own MCP servers leak into the caller's toolset: %q", joined)
 	}
 	// No bridge, no flags.
 	plain := strings.Join(b.buildArgs(core.InferRequest{Model: "m"}), " ")

@@ -227,6 +227,16 @@ func TestServerNameAndAllowedTools(t *testing.T) {
 	if _, ok := servers[ServerName]; !ok {
 		t.Errorf("mcp config missing the %q server: %v", ServerName, cfg)
 	}
+	// alwaysLoad is what makes the caller's tools reachable at all. Without it
+	// the CLI *defers* them: their schemas stay out of the model's tool list
+	// until it calls ToolSearch, and a model that does not think to search
+	// reports it has no such tool and narrates the call instead. With it, the
+	// tools are inlined in the prompt like any native one.
+	relay := servers[ServerName].(map[string]any)
+	if relay["alwaysLoad"] != true {
+		t.Errorf("mcp config must set alwaysLoad, or the CLI defers the caller's "+
+			"tools behind ToolSearch and the model never calls them: %v", relay)
+	}
 }
 
 var _ = context.Background

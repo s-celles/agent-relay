@@ -87,13 +87,25 @@ func (s *Session) AllowedTools() []string {
 }
 
 // MCPConfig is the --mcp-config payload pointing the CLI at this session.
+//
+// alwaysLoad is load-bearing, not a tuning knob. By default the CLI *defers*
+// an MCP server's tools: it fetches tools/list, but keeps the schemas out of
+// the model's tool list until the model asks for them via its ToolSearch
+// built-in. The relay denies every built-in (they would run on the relay host
+// rather than route back to the caller), ToolSearch included — so a deferred
+// tool is a tool the model can never reach. It then reports it has no such
+// tool and narrates the call as prose, and the caller waits forever for a
+// tool_use that never comes. alwaysLoad inlines the caller's tools in the
+// prompt, like a native one, which is the raw-model contract agent clients
+// expect. Verified against claude 2.1.207 by `just tools-check`.
 func (s *Session) MCPConfig() string {
 	cfg := map[string]any{
 		"mcpServers": map[string]any{
 			ServerName: map[string]any{
-				"type":    "http",
-				"url":     s.URL(),
-				"headers": map[string]string{"Authorization": "Bearer " + s.token},
+				"type":       "http",
+				"url":        s.URL(),
+				"headers":    map[string]string{"Authorization": "Bearer " + s.token},
+				"alwaysLoad": true,
 			},
 		},
 	}
