@@ -1,0 +1,55 @@
+# Multi-agent A2A, Python. Run `just` to list the recipes.
+#
+# Three A2A agents (coder, reviewer, summariser), one relay. The relay is
+# external — start it in the repo root with `just run-hybrid` (the summariser
+# needs the Ollama route). Pass its token in as RELAY_TOKEN.
+
+venv := ".venv"
+py := venv / "bin" / "python"
+relay_url := "http://127.0.0.1:18082"
+
+coder := "http://127.0.0.1:9101"
+reviewer := "http://127.0.0.1:9102"
+summarizer := "http://127.0.0.1:9103"
+
+default:
+    @just --list
+
+# Create the venv and install the two SDKs this example uses.
+setup:
+    @test -d {{venv}} || python3 -m venv {{venv}}
+    {{py}} -m pip install --quiet --upgrade pip
+    {{py}} -m pip install --quiet 'a2a-sdk[http-server]' anthropic uvicorn
+    @echo "ok — start a relay (just run-hybrid, in the repo root), then: just agents"
+
+# Start the three agents in the background, each an A2A server for one role.
+# RELAY_URL / RELAY_TOKEN are read from the environment (export them first).
+agents: setup
+    #!/usr/bin/env bash
+    set -euo pipefail
+    for role in coder reviewer summarizer; do
+      nohup {{py}} agents.py "$role" >/dev/null 2>&1 &
+    done
+    sleep 3
+    echo "agents up: 9101 coder · 9102 reviewer · 9103 summarizer"
+
+# They are real A2A servers — fetch each Agent Card to prove it.
+cards:
+    #!/usr/bin/env bash
+    for url in {{coder}} {{reviewer}} {{summarizer}}; do
+      curl -sS "$url/.well-known/agent-card.json" \
+        | {{py}} -c "import json,sys; c=json.load(sys.stdin); print(c['name'], '·', c['skills'][0]['id'])"
+    done
+
+# Chain the three: code → review → summarise.
+run task:
+    {{py}} orchestrator.py "{{task}}"
+
+# agents + run, in one shot.
+demo task: agents
+    @just run "{{task}}"
+
+# Stop the three agents.
+clean:
+    @pkill -f "agents.py" 2>/dev/null || true
+    @echo "agents stopped"

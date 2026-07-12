@@ -41,32 +41,35 @@ another machine. That is what makes this A2A rather than three function calls.
 ## Run it
 
 The summariser runs on a local Ollama model, so start the relay with the Ollama
-route:
+route (in the repo root), then drive the example with its own `justfile`:
 
 ```sh
-just run-hybrid          # in the repo root
+just run-hybrid                          # repo root: the relay, on :18082
+
+export RELAY_URL=http://127.0.0.1:18082
+export RELAY_TOKEN=$(just print-token)   # from the repo root
+
+# in this directory:
+just setup                               # venv + the two SDKs
+just agents                              # the three A2A servers, backgrounded
+just cards                               # optional: fetch each Agent Card
+just run "a function that checks whether a string is a palindrome"
+just clean                               # stop the agents
 ```
 
-Then:
+`just demo "…"` does `agents` + `run` in one go.
+
+Or without `just`, the same steps by hand:
 
 ```sh
 python3 -m venv .venv
 .venv/bin/pip install 'a2a-sdk[http-server]' anthropic uvicorn
 
-export RELAY_URL=http://127.0.0.1:18082
-export RELAY_TOKEN=$(just print-token)
-
-# three terminals, or background them
-.venv/bin/python agents.py coder       # :9101
+.venv/bin/python agents.py coder       # :9101  (three terminals, or background)
 .venv/bin/python agents.py reviewer    # :9102
 .venv/bin/python agents.py summarizer  # :9103
-```
 
-And orchestrate:
-
-```sh
-RELAY_TOKEN=$(just print-token) \
-  .venv/bin/python orchestrator.py "a function that checks whether a string is a palindrome"
+.venv/bin/python orchestrator.py "a function that checks whether a string is a palindrome"
 ```
 
 ## What it costs
