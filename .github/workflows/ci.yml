@@ -40,7 +40,7 @@ jobs:
       # is the config; `just lint` runs the same thing locally.
       - name: golangci-lint
         if: matrix.os == 'ubuntu-latest'
-        uses: golangci/golangci-lint-action@v8
+        uses: golangci/golangci-lint-action@v9
 
       # The suite spawns a stub `claude` script, never the real CLI: no
       # credentials are needed and no tokens are ever spent. It also holds
